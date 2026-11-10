@@ -48,19 +48,19 @@ Auto transitions by system only: preparing/awaiting_review/ready_to_submit (work
 Steps:
 1. `resolve_url` — choose official application URL (job.application_url; else listing URL). 
 2. `verify_domain` — host ∈ known ATS domains list OR company verified domains; else **pause** review (category `company_legitimacy`).
-3. `select_resume` — require approved resume version; if none and autonomy `auto_prepare_resume` → enqueue `resume.generate`, state waits `resume_pending` (poll via event); else pause for user to approve resume.
+3. `select_resume` — requires a user-selected resume version (`resume_attachments`); if none → pause review (`required_action=decide`, "Select a resume"). No generation, no AI selection; default version pre-suggested only.
 4. `detect_platform` — `detectPlatform(url)`.
 5. `open_portal` — browser; blocked detection → pause(`blocked`).
 6. `extract_form` — fields (multi-page: loop until review/submit page) → persist `application_form_fields`. NO submission/next-page clicks that commit data; page transitions limited to "Next/Continue" in drivers marked `safeNavigation`.
-7. `map_fields` — pure mapping + answer resolution hierarchy → `application_field_answers`.
-8. `validate_answers` — zod/type/length/option checks; classify categories; collect all items needing review → **create review requests (one per field/issue)**; if any → pause `waiting_review`; status `awaiting_review`.
-9. `fill_form` — requires all answers `approved` or `profile`-sourced non-sensitive; fill; upload docs.
+7. `map_fields` — pure mapping + classifier + answer resolution hierarchy → `application_field_answers`. Core-category fields skip AI entirely.
+8. `validate_answers` — type/length/option checks; collect all items needing review (missing/null profile data, core categories incl. EEO, ambiguous, AI suggestions) → **create review requests (one per field/issue)**; if any → pause `waiting_review`; status `awaiting_review`.
+9. `fill_form` — requires all answers `approved` or `profile`-sourced non-core; fill; attach the **original** resume file.
 10. `validate_form` — read back values & portal validation messages; mismatch → fail(`fill_mismatch`) → retry ≤2 else pause for user.
-11. `final_summary` — build summary & `summary_hash`; status `ready_to_submit`.
-12. `await_authorization` — policy.evaluate(scope `submission`): `allow` only if a standing authorization (autonomy auto_submit scope) matches AND no review-category answers unapproved AND risk ≤ allowed AND daily cap not hit; else pause `waiting_authorization`, notify user with summary link.
-13. `submit` — see §5.
+11. `final_summary` — build summary & `summary_hash` (answers + resume sha256 + URL); status `ready_to_submit`; user must **approve summary** (`approve-summary`) — this is the Level-2 approval.
+12. `await_submission_decision` — three outcomes: (a) **manual handover** (default): open headed browser with prefilled form, workflow `paused(manual_handover)`, user submits then clicks "I submitted it" → `finalize` with `submission_source=manual_confirmed` (and optional evidence/notes); (b) **per-application authorized submit** if env `SUBMISSION_ENABLED=true` AND settings toggle on AND user authorized this `summary_hash` → `submit`; (c) user cancels/defers. There is no policy-driven path (L3 future).
+13. `submit` — see §5 (M12 only; code absent before M12).
 14. `verify_submission` — see §5.
-15. `finalize` — transition application to `submitted`, job → `applied`, notify, schedule monitoring.
+15. `finalize` — transition application to `submitted`, job → `applied`, notify, schedule monitoring (if enabled).
 
 Resume semantics: `workflow.resume` handler loads checkpoint; if status `waiting_review` and all requests for the checkpoint are resolved → set `running`, continue at stored `step` (usually `validate_answers` re-evaluation → `fill_form`). Idempotent: if status already running/completed → no-op.
 Browser state is NOT persisted across pauses: on resume, re-open portal and re-extract/fill from stored answers (form field keys make this deterministic). Portal drafts used only if driver supports them safely.
@@ -82,16 +82,18 @@ verify (wait for confirmation text/URL/DOM per driver; max 30s; then check email
   pre-click failure (nothing sent) → 'failed_before_click' ONLY if status was 'intent' (never clicked)
 ```
 Rules:
-- If worker crashes between 'clicked' and verify: on recovery, status 'clicked' → run `verify` only (inspect portal: open application URL / search confirmation email); never click again. If cannot determine → `unverified`.
+- If worker crashes between 'clicked' and verify: on recovery, status 'clicked' → run `verify` only (inspect portal / confirmation); never click again. If cannot determine → `unverified`.
 - Retry of submit allowed only from `failed_before_click`/`abandoned` (new row after previous is terminal-failed) or after user `resolve-unverified: retry_confirmed`.
 - "Application already submitted externally": driver detects "already applied" text → treat as `verified` with evidence kind `already_applied`.
+- This protocol is implemented in **M12**; before M12 no code path may click a submit control (manual handover only).
 
-## 6. Authorization model
+## 6. Authorization model (v1: per-application only)
 `application_authorizations` kinds:
-- `submission` per application: user clicks "Authorize submission" on the final summary; stores `summary_hash`. Expires in 24h (configurable) or on any answer/doc change.
-- `standing` (stored in `autonomy_policies.auto_submit_scope`): allowed ats types, min suitability, max risk, daily cap, allowed sources, `excludeCategories`. Only matches when **every** answer on the form came from `profile` or approved `reusable` sources, no AI-sourced answer is unapproved, no core review category present, and policy `allow`.
-- Legal/consent/bond/declaration: **always** per-item explicit authorization (`kind` accordingly, scope includes text hash of the declaration). Never covered by standing scope.
-Check function `checkSubmissionAuthorization(app): {ok:boolean, reasons[]}` is pure given loaded data; tested exhaustively.
+- `submission` per application: user clicks "Authorize submission" on the final summary; stores `summary_hash`; expires in 24h (configurable) or on any answer/resume/URL change. Usable only when env `SUBMISSION_ENABLED=true` and settings toggle is on.
+- Legal/consent/bond/declaration: **always** per-item explicit authorization (`kind` accordingly, scope includes text hash of the declaration). Never inferred, never reusable by default.
+- EEO/demographic: not an "authorization" but always a human answer (provide / decline / blank); never auto.
+- **No standing authorizations or auto-submit policy in v1 (Level 3 future).** `autonomy_policies.level` max = 2.
+Check function `checkSubmissionAuthorization(app): {ok:boolean, reasons[]}` is pure given loaded data. Reasons it fails: gates off, no authorization, expired, `summary_hash` mismatch, any answer not approved, any core-category field without human answer/authorization, resume sha256 mismatch, domain unverified, duplicate application. Tested exhaustively.
 
 ## 7. Source sync run
 `running → succeeded | partial | failed | cancelled`. Failure increments source failures; after 5 consecutive → source status `failing` and notify; exponential schedule backoff (cap 24h). Never marks listings missing on failed/partial run.
@@ -100,8 +102,24 @@ Check function `checkSubmissionAuthorization(app): {ok:boolean, reasons[]}` is p
 `pending → sent | failed(attempts<5 → pending with backoff) | skipped(channel disabled)`.
 
 ## 9. Worker recovery
-Heartbeat every 15s. On worker start: (1) pg-boss resumes expired active jobs; (2) recovery job scans `workflow_checkpoints` with status `running` and `updated_at` older than 2 min → re-enqueue current step (unless step is `submit`, in which case run `verify_submission` only); (3) scans submissions `clicked` → verify.
+Heartbeat every 15s. On worker start: (1) pg-boss resumes expired active jobs; (2) recovery job scans `workflow_checkpoints` with status `running` and `updated_at` older than 2 min → re-enqueue current step (unless step is `submit`, in which case run `verify_submission` only); (3) scans submissions `clicked` → verify; (4) sweeps orphaned temp browser files.
 UI offline banner when `last_seen_at` > 60s.
+
+## 10. Failure recovery matrix
+| Failure | Detection | Handling |
+|---------|-----------|----------|
+| Browser crash | Playwright disconnect/exception `BROWSER_CRASHED` | close context, delete temp files, retry step ≤2 from `open_portal` using stored answers; after crash post-`clicked` → verify-only |
+| Network interruption | fetch/navigation errors | retryable error class, backoff; workflow stays `running`/retries; after max → pause with notification, no state loss |
+| AI quota exhausted / provider down | `BUDGET_EXCEEDED`, 429/503 | defer AI tasks to next window with backoff; non-AI work continues; notification (deduped) "AI quota exhausted"; application flow: AI suggestions skipped → fields go to human review instead of blocking silently |
+| Partially completed application | checkpoint step + `application_field_answers.status` | resume at stored step; re-fill is idempotent (read-back first; fill only fields whose value differs); never creates a second application (dedupe_key unique) or second submit |
+| Worker killed mid-step | stale `updated_at` | recovery job (§9) |
+| DB interruption | tx rollback | step retried; no partial multi-table state (single tx per step result) |
+| Portal layout change | `LAYOUT_CHANGED` | pause with screenshot, manual handover |
+| CAPTCHA/login/403 | `detectBlock` | pause `blocked`; manual handover; never evade |
+| User responds days later | n/a | request pending indefinitely; on resume re-open portal (session not persisted), re-verify domain, re-extract form and diff vs stored fields; if portal form changed materially → new review request |
+
+## 11. Company monitor machine (company-discovery)
+Company `discovery_status`: `discovered → registered → monitoring ⇄ paused`; any → `excluded` (reversible to `registered`). `monitoring` requires ≥1 `company_career_pages.status='confirmed'` **or** user-chosen "monitor domain only" (checks career page presence). Probe candidates: `pending_confirmation → confirmed|rejected`. Check run: `queued → running → succeeded|failed|blocked_by_robots|unreachable`; 5 consecutive failures → monitor `failing` + deduped notification; `unreachable` never flips a company to closed/excluded automatically.
 
 ## 10. Diagram
 ```mermaid
@@ -121,10 +139,10 @@ stateDiagram-v2
   validate_answers --> fill_form
   fill_form --> validate_form
   validate_form --> final_summary
-  final_summary --> await_authorization
-  await_authorization --> waiting_authorization: not covered
-  waiting_authorization --> submit: user authorized
-  await_authorization --> submit: policy allows
+  final_summary --> await_submission_decision: user approves summary
+  await_submission_decision --> manual_handover: default
+  manual_handover --> finalize: user confirms submitted
+  await_submission_decision --> submit: per-app authorization + gates on
   submit --> verify_submission
   verify_submission --> finalize: verified
   verify_submission --> unverified: uncertain

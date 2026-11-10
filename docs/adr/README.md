@@ -35,11 +35,35 @@ Rationale: user must change policy without code. Typed rule objects, evaluated b
 ## ADR-011 Submission idempotency via intent row + unique partial index
 Decision: `application_submissions` row (`status=intent`) inserted in a transaction BEFORE clicking submit; partial unique index permits only one non-terminal-failed row per application. Post-click uncertainty → `unverified`, never auto-retried. See doc 10 §5.
 
-## ADR-012 Resume PDF via Playwright, DOCX via `docx`
-Rationale: no LaTeX toolchain required; LaTeX optional later.
+## ADR-012 ~~Resume PDF via Playwright, DOCX via `docx`~~ — SUPERSEDED by ADR-017
+No resume generation exists in v1.
 
 ## ADR-013 Outbox for notifications and queue enqueue-after-commit
 Decision: notifications written in same transaction as the triggering change; a notification worker delivers. For enqueue, use pg-boss `send` with the same DB connection when transactional, else outbox row + relay.
 
 ## ADR-014 Evidence-first model
 Decision: `evidence` rows are immutable; assessments reference evidence ids; every claim carries `verification_status` ∈ {verified, partially_verified, ai_estimate, unverified, contradictory, unknown}.
+
+---
+# Added 2026-11-10 (after user decisions, see docs/19-user-decisions.md)
+
+## ADR-015 Company Discovery is a separate module from Job Discovery
+Context: user wants companies discovered/monitored even with zero openings and no hardcoded list. Decision: module `company-discovery` owns company registration, career-page/ATS detection, slug probing (user-confirmed), monitors and `company.check` runs. `discovery` (jobs) consumes registered boards read-only; ATS `job_sources` are derived from `company_career_pages`. Consequences: two schedulers (company.check 24h, discovery.sync 6h), `company_check_runs` table, no seed list; "dynamic discovery" is limited to user inputs, derived registrations and public-API probing (no exhaustive crawl).
+
+## ADR-016 SearchProvider abstraction; v1 = official-site provider only
+Decision: `interface SearchProvider { name; search(query): Promise<SearchHit[]>; fetchPublic(url) }` with `OfficialSiteProvider` initially (company website, DNS, career page, public pages via `safeFetch`). Evidence rows store URL, retrieved_at, excerpt, confidence. No news/review provider until user chooses one. Missing facts remain `unknown`.
+
+## ADR-017 Resume Manager only — no generation/modification (supersedes ADR-012)
+Context: user uploads own PDF and forbids generation/rewriting/tailoring/modification. Decision: store original bytes unmodified (sha256, immutable), versions, preview of the original, per-application selection, attachment via file upload of the original path. No AI is involved with resumes. No libs for PDF/DOCX generation or parsing. Consequences: profile is manual (no import), resume validator/claims/templates removed.
+
+## ADR-018 Autonomy levels L1/L2 only; L3 deferred
+Decision: `autonomy_level` ∈ {1,2}. L2 submission: manual handover (default) or per-application authorized automated submit gated by env `SUBMISSION_ENABLED` + settings toggle. Standing/auto-submit policy not implemented; DB keeps no `auto_submit` column in v1. Consequences: smaller attack surface; policy engine retains `submission` scope for per-app checks only.
+
+## ADR-019 WSL2 Ubuntu primary; native PostgreSQL 16 in WSL; no Docker
+Context: audit (doc 01): Ubuntu-D 24.04 with systemd, no Node/PG in WSL; Windows PG18 listens on `*`; Docker stopped. Decision: nvm Node 22 and apt PostgreSQL 16 inside WSL; working tree on ext4; Playwright Chromium in WSL (WSLg for headed handover, verified at M0). Windows PG not reused. Consequences: Windows-native support later; WSL idle shutdown requires keep-alive/auto-start documented in doc 16 §6.
+
+## ADR-020 Never fabricate: tri-state `unknown` everywhere
+Decision: optional data yields `unknown` (NULL/explicit enum), domain functions are tri-state, UI shows "Unknown". Flagged neutral scores are labeled.
+
+## ADR-021 Core review categories never use AI
+Decision: fields classified legal/consent/bond/work_auth/salary/notice/relocation/background/eeo/sensitive skip the `form_answer_draft` AI task entirely; the deterministic classifier (keywords + field type) decides, the stricter of classifier/AI-ambiguity wins for other fields.

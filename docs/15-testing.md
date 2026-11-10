@@ -21,10 +21,11 @@
 | T-POL | each rule type; conflict resolution deny>review>allow; core rules uneditable; decision record contents |
 | T-AIVAL | schema pass/fail, correction flow, quote-substring validator, grounded-answer validator, injection flag |
 | T-SM | every machine: all allowed transitions pass, every non-listed transition rejected (table-driven from the same transition tables as code) |
-| T-MAP | field→profile mapping, option matching exact vs fuzzy suggestion, category classifier, sensitive always review |
-| T-AUTH | `checkSubmissionAuthorization` matrix: no auth, expired, changed summary hash, AI-unapproved answer, legal field, cap exceeded, risk too high, valid standing, valid per-app |
-| T-REDACT | emails, phones, keys, cookies |
-| T-RESVAL | claim extraction; fabricated skill/date/number/employer detected; approved reword passes |
+| T-MAP | field→profile mapping, option matching exact vs fuzzy suggestion, category classifier, EEO/demographic & core categories never invoke AI and always create review requests (with decline/blank options where allowed) |
+| T-AUTH | `checkSubmissionAuthorization` matrix: gates off (`SUBMISSION_ENABLED`/setting), no auth, expired, changed summary hash, unapproved answer, core/EEO field without human answer, resume sha256 mismatch, duplicate application, valid per-app |
+| T-REDACT | emails, phones, keys, Telegram bot URL token, cookies, screenshot input masking |
+| T-RES | PDF magic-byte validation (`%PDF-`), sha256 byte-for-byte preservation across upload/preview/attachment, immutability (no update path), duplicate hash detection, delete guard when attached to active application |
+| T-CD | company slug generator, ATS URL/HTML detector, no hardcoded company list in repo (grep test) |
 
 ## 3. Integration tests
 | ID | Scenario |
@@ -45,16 +46,20 @@
 | T-REC-1 | **Pause/restart/resume:** run workflow to `waiting_review`, drop all in-memory state (new service instances/new worker process), respond, workflow resumes at correct step, not from start (asserted by task attempt counts) |
 | T-REC-2 | worker killed mid-step (real child process SIGKILL in test) → recovery job re-enqueues; no duplicate side effects |
 | T-REC-3 | duplicate `workflow.resume` delivered twice → single effect |
-| T-APP-1 | submission protocol: intent row precedes click; unique index blocks concurrent second submit (two parallel calls) |
+| T-APP-1 | submission protocol: intent row precedes click; unique index blocks concurrent second submit (two parallel calls); `dedupe_key` unique index blocks duplicate active applications |
+| T-CD-1 | company discovery: manual add, CSV import, career-page detection, ATS slug probing (`partially_verified` until user confirms), `company.check` with 0 openings stays `monitoring`, derived `job_sources` reconciliation |
+| T-DEG | degraded mode: with `GEMINI_API_KEY` unset or 429 quota exhausted, company discovery, job discovery, manual/URL import, deterministic evaluation fields, resume manager, review center, and non-AI application prep all succeed; AI tasks mark `pending_ai` and drain on recovery |
+| T-RET | `maintenance.retention` honors 180d snapshots/company evidence (archiving evidence referenced by evaluations/applications), 30d screenshots, 90d AI/exec logs, immediate temp browser file cleanup, and never deletes applications, audit history, or resume PDFs |
+| T-TRC | traceability endpoint `/api/trace/:type/:id` returns source listing, evidence, AI request metadata, policy decisions, user corrections, and automation events |
 
 ## 4. Browser/E2E (Playwright) against fixture ATS
-- E2E-1 onboarding wizard → profile persisted.
+- E2E-1 onboarding wizard (all personal/preference fields blank by default) → profile persisted.
 - E2E-2 profile edit + verify toggle + completeness.
 - E2E-3 add source (fixture-fed local feed) → jobs listed → evaluation visible with breakdown + evidence.
-- E2E-4 shortlist → resume propose → validation → preview → approve.
-- E2E-5 application prep: form extracted, fields mapped, review requests appear; answer one, approve suggestion, defer one; workflow resumes.
-- E2E-6 authorization gate: submit button disabled until authorize; authorize with typed confirm; submission verified; tracker + notification updated.
-- E2E-7 standing policy auto-submit **only** when all conditions hold (and not when a consent field present).
+- E2E-4 Resume Manager: upload PDF resume → verify sha256 → preview original inline → select for application.
+- E2E-5 application prep (L2): form extracted, fields mapped, EEO & sensitive fields trigger review without AI; answer one, decline one EEO, approve suggestion, defer one; workflow resumes.
+- E2E-6 submission (L2): manual handover flow AND per-application authorization gate (submit disabled until authorized with typed confirm; verified; tracker + notification updated).
+- E2E-7 Company Discovery: add company → detect ATS / confirm probe candidate → monitor runs with 0 openings and shows status accurately.
 - E2E-8 notifications bell + dashboard counts match DB.
 - E2E-9 a11y scan on all pages (axe) no critical violations.
 - E2E-10 worker offline banner (stop worker, banner appears within 90s).

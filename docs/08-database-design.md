@@ -19,17 +19,22 @@ No `user_id` columns. Single row `candidate_profiles`. (If multi-user ever neede
 - **candidate_certifications**, **candidate_awards**, **candidate_publications**: profile_id, title, issuer/venue, date, url, verification.
 - **candidate_links**: profile_id, kind (`github|linkedin|portfolio|website|other`), url.
 - **profile_revisions**: profile_id, snapshot jsonb, reason, created_at.
-- **profile_import_drafts**: source_file_id, extracted_text_hash, proposed jsonb, status (`pending|partially_accepted|accepted|discarded`).
-- **job_preferences**: single row: preferred_roles text[], excluded_roles text[], industries text[], excluded_industries text[], locations jsonb `[{city?,country,remoteOk}]`, work_modes text[], min_comp numeric, preferred_comp numeric, comp_currency, comp_period, experience_levels text[], employment_types text[], prioritized_companies text[], excluded_companies text[], max_notice_period_days, relocation (`no|within_country|anywhere|case_by_case`).
-- **autonomy_policies**: single row (versioned: `version int`, `previous` kept in `autonomy_policy_history`): allowed_source_ids uuid[], auto_shortlist bool, shortlist_threshold int, auto_prepare_resume bool, auto_fill_forms bool, auto_submit bool, auto_submit_scope jsonb (validated zod), always_review_categories text[] (superset of core), notification_prefs jsonb.
-- **reusable_application_answers**: question_key text unique, question_patterns text[], answer jsonb, scope jsonb (`{atsTypes?,companyIds?}`), category, authorized_at **not null**, authorized_note, last_used_at, use_count, disabled bool.
+- **job_preferences**: single row, **all columns nullable/empty by default (no assumed values)**: preferred_roles text[], excluded_roles text[], industries text[], excluded_industries text[], locations jsonb `[{city?,country,remoteOk}]`, work_modes text[], min_comp numeric, preferred_comp numeric, comp_currency, comp_period, experience_levels text[], employment_types text[], prioritized_companies text[], excluded_companies text[], max_notice_period_days, relocation (`no|within_country|anywhere|case_by_case`, nullable).
+- **autonomy_policies**: single row (versioned: `version int`; previous rows kept in `autonomy_policy_history`): `level smallint CHECK (level IN (1,2)) default 1`, auto_shortlist bool default false, shortlist_threshold int, may_prepare_applications bool default false, may_fill_forms bool default false, allowed_company_ids uuid[] nullable, allowed_ats text[] nullable, always_review_categories text[] (must ⊇ core set; CHECK enforced in app + DB trigger), notification_prefs jsonb. **No auto_submit column (L3 not implemented).**
+- **reusable_application_answers**: question_key text unique, question_patterns text[], answer jsonb, scope jsonb (`{atsTypes?,companyIds?}`), category (core categories need `core_category_confirmed bool` true), authorized_at **not null**, authorized_note, last_used_at, use_count, disabled bool. EEO category rows rejected by CHECK unless `core_category_confirmed`.
 
 ## 3. Discovery
-- **job_sources**: name, type (adapter type), config jsonb (zod-validated by adapter), enabled, schedule_cron, status (`idle|running|failing|disabled`), last_success_at, last_error, consecutive_failures, rate_limit jsonb.
+- **job_sources**: name, type (adapter type), config jsonb (zod-validated by adapter), `origin` (`derived_from_company|manual`), `career_page_id` fk nullable (set when derived), enabled, schedule_cron, status (`idle|running|failing|disabled`), last_success_at, last_error, consecutive_failures, rate_limit jsonb. Derived sources are created/updated only by `discovery.reconcile_sources`.
 - **source_sync_runs**: source_id fk, started_at, finished_at, status (`running|succeeded|partial|failed|cancelled`), counts jsonb? → explicit cols: new_count, changed_count, unchanged_count, failed_count, error text, cursor_after text.
-- **companies**: name, normalized_name, primary_domain (nullable), industry, size_range, hq_country, website_url, notes. Unique(primary_domain) where not null. Index normalized_name.
+- **companies**: name, normalized_name, primary_domain (nullable), industry, size_range, hq_country, website_url, notes, `discovery_status` (`discovered|registered|monitoring|paused|excluded`), `origin` (`manual|csv|job_url|rss|email|probe`), `origin_ref` text, registered_at, excluded_at/exclude_reason. Unique(primary_domain) where not null. Indexes: normalized_name, gin trigram on normalized_name (`pg_trgm`).
 - **company_domains**: company_id, domain, kind (`official|careers|ats|email|unverified`), verification vstatus, evidence_id nullable. Unique(domain).
-- **company_career_pages**: company_id, url, ats_type, detected_at, last_checked_at.
+- **company_career_pages**: company_id, url, ats_type (`greenhouse|lever|ashby|smartrecruiters|workday|darwinbox|oracle|successfactors|custom|unknown|unsupported`), board_id text nullable, status (`candidate|confirmed|rejected|dead`), verification vstatus (probe hits = `partially_verified` until user confirms), detected_via (`manual|link_detect|embed_detect|json_ld|probe|job_url`), evidence_id, detected_at, confirmed_at, last_checked_at. Unique(company_id, ats_type, board_id).
+
+## 3A. Company discovery (separate from job discovery)
+- **company_monitors**: company_id unique fk, enabled, check_interval_hours default 24, status (`ok|failing|paused`), last_checked_at, next_check_at, openings_count int nullable (unknown ≠ 0; 0 is a real value), consecutive_failures, last_error.
+- **company_check_runs**: company_id, career_page_id nullable, started_at, finished_at, status (`succeeded|failed|blocked_by_robots|unreachable`), openings_count nullable, board_alive bool nullable, ats_changed bool, details jsonb, error. Retention: 180 days.
+- **company_probe_candidates**: company_id, ats_type, slug, outcome (`exists|not_found|rate_limited|error`), displayed_name, name_match_score numeric, domain_match bool nullable, status (`pending_confirmation|confirmed|rejected`), probed_at. Unique(company_id, ats_type, slug).
+- **company_import_batches**: source (`csv|paste`), total, accepted, rejected, created_at (rows traceable via `companies.origin_ref`).
 - **jobs** (canonical): company_id fk, title, normalized_title, seniority, description_text, description_html, location_raw, city, country, work_mode (`remote|hybrid|onsite|unknown`), employment_type, comp_min, comp_max, comp_currency, comp_period, comp_disclosed bool, posted_at, deadline_at, application_url, canonical_url, status (see doc 10 §1), status_reason, first_discovered_at, last_checked_at, description_hash, primary_listing_id (fk deferred), possible_duplicate_of uuid nullable. Indexes: (status), (company_id), (posted_at desc), (canonical_url), GIN tsvector on title+description for search.
 - **job_source_listings**: job_id fk, source_id fk, external_id, listing_url, status (`active|missing|closed`), missing_count, first_seen_at, last_seen_at, last_hash. Unique(source_id, external_id).
 - **job_snapshots**: listing_id fk, content_hash, raw jsonb (or file ref if >256KB), fetched_at. Unique(listing_id, content_hash).
@@ -49,22 +54,21 @@ No `user_id` columns. Single row `candidate_profiles`. (If multi-user ever neede
 - **policy_rules**: type, params jsonb, enabled, priority int, version int, description, updated_by.
 - **policy_decisions**: scope (`job|application|form_field|submission`), subject_id, inputs jsonb (redacted), rules_evaluated jsonb, decision (`allow|require_review|deny`), explanation, ruleset_version, at.
 
-## 6. Resumes
-- **resumes**: kind (`master|tailored`), name, template (`classic|compact`).
-- **resume_versions**: resume_id, version_no, model jsonb (structured sections w/ sourceRef), profile_revision_id, status (`draft|validated|invalid|approved|superseded`), approved_at, created_by (`system|user`), change_summary. Unique(resume_id, version_no).
-- **resume_documents**: version_id, format (`pdf|docx|html`), file_path, sha256, size_bytes.
-- **resume_job_associations**: version_id, job_id, application_id nullable. Unique(version_id, job_id).
-- **resume_validation_results**: version_id, passed bool, issues jsonb `[{claim,kind,detail}]`, validated_at.
+## 6. Resumes (Resume Manager — originals only; no generation, no modification)
+- **resumes**: label, notes, `is_default` bool (partial unique: only one true), status (`active|archived`), created_at. (One row per uploaded logical resume; versions below.)
+- **resume_versions**: resume_id fk, version_no, original_filename, stored_path (under `data/resumes/`), sha256 **unique**, size_bytes, mime `application/pdf`, page_count nullable, uploaded_at, label, notes, status (`active|archived|deleted`). **Immutable:** DB trigger blocks UPDATE of `stored_path, sha256, size_bytes, original_filename`. Unique(resume_id, version_no).
+- **resume_attachments**: application_id fk, resume_version_id fk, selected_at, selected_by (`user`), attached_at nullable, attached_sha256 nullable (hash of the exact file handed to the browser; must equal version sha256 — CHECK in app + test), label_snapshot, version_no_snapshot. Unique(application_id) for the active attachment. Snapshots survive resume deletion (FK `ON DELETE SET NULL` on resume_version_id).
+(Removed: resume_job_associations, resume_validation_results, tailored/master kinds, templates, DOCX/HTML documents.)
 
 ## 7. Applications
-- **applications**: job_id fk **unique** (one application per job), status (doc 10 §3), platform (ats type), application_url, verified_domain bool, resume_version_id, workflow_id fk, next_action text, next_action_due_at, applied_at, last_activity_at, notes text, source label.
+- **applications**: job_id fk **unique** (one application per job), `dedupe_key` text (sha256 of company_id + canonical application URL / requisition id), submission_source (`manual_confirmed|automated_verified|automated_unverified_resolved`) nullable, status (doc 10 §3), platform (ats type), application_url, verified_domain bool, resume_version_id nullable, workflow_id fk, next_action text, next_action_due_at, applied_at, last_activity_at, notes text, source label. **Partial unique index on `dedupe_key` where status NOT IN ('withdrawn','closed','rejected')** → duplicate applications refused at DB level.
 - **application_tasks**: application_id, step, status (`pending|running|done|failed|skipped`), attempts, error_class, error, started_at, finished_at.
 - **application_form_fields**: application_id, page_index, field_key (stable hash of label+type+options), label, type (`text|email|phone|number|date|select|radio|checkbox|multiselect|file|textarea|unknown`), required, options jsonb, selector_strategy jsonb, category (`profile|legal|consent|bond|work_auth|salary|notice|relocation|background|sensitive|eeo|other`), UNIQUE(application_id, field_key).
-- **application_field_answers**: field_id, answer jsonb, source (`profile|reusable|ai|human`), source_ref, confidence numeric nullable, status (`proposed|needs_review|approved|filled|verified_filled|failed`), approved_at, reviewed_by_request_id nullable.
-- **application_documents**: application_id, kind (`resume|cover_letter|other`), file_path, resume_version_id nullable, approved_at.
+- **application_field_answers**: field_id, answer jsonb (nullable; null + `decision='declined'|'left_blank'` allowed for EEO/optional fields), decision (`answered|declined|left_blank`), source (`profile|reusable|ai|human`), source_ref, confidence numeric nullable, status (`proposed|needs_review|approved|filled|verified_filled|failed`), approved_at, reviewed_by_request_id nullable. CHECK: `category` core ⇒ `source IN ('human','reusable')` (never `ai`/`profile` auto for EEO).
+- **application_documents**: application_id, kind (`resume|other`), file_path, resume_version_id nullable, sha256, approved_at.
 - **application_events**: application_id, type, from_status, to_status, actor, details jsonb, evidence jsonb, at. Append-only.
 - **application_submissions**: application_id, attempt_no, status (`intent|clicked|verified|unverified|failed_before_click|abandoned`), authorization_id fk, intent_at, clicked_at, verified_at, verification_evidence jsonb, screenshot_path, error. **Partial unique index**: `UNIQUE(application_id) WHERE status IN ('intent','clicked','verified','unverified')`.
-- **application_authorizations**: application_id nullable (null = standing policy), kind (`submission|legal_declaration|consent|bond|custom`), scope jsonb (what exactly: ats, company, job, text hash of declaration), granted_at, granted_by `user`, expires_at, revoked_at, policy_version, summary_snapshot jsonb (answers+docs hash authorized). **Authorization covers a `summary_hash`; any change to answers/docs invalidates it.**
+- **application_authorizations**: application_id **not null** (per-application only in v1; no standing rows), kind (`submission|legal_declaration|consent|bond|custom`), scope jsonb (what exactly: job, company, ats, text hash of declaration), granted_at, granted_by `user`, expires_at, revoked_at, summary_hash, summary_snapshot jsonb. **Authorization covers a `summary_hash`; any change to answers/resume/URL invalidates it.**
 - **application_contacts**, **application_interviews**: recruiter info; stage, scheduled_at, notes.
 
 ## 8. Human review & workflow
@@ -78,7 +82,8 @@ No `user_id` columns. Single row `candidate_profiles`. (If multi-user ever neede
 - **scheduled_tasks**: name unique, cron, enabled, last_run_at, next_run_at (mirror of pg-boss schedules for UI).
 - **worker_heartbeats**: worker_id, started_at, last_seen_at, info jsonb.
 - **agent_execution_logs**: correlation_id, workflow_id nullable, job_id nullable, application_id nullable, kind (`ai|browser|discovery|workflow|queue`), step, level, message (redacted), data jsonb (redacted), duration_ms, tokens_in, tokens_out, error_class, at. Index (correlation_id), (at desc).
-- **ai_requests**: task, model, provider, input_hash, status (`ok|invalid_output|error|rate_limited|cached`), tokens_in, tokens_out, latency_ms, cost_estimate, error, at. Index (input_hash,task).
+- **ai_requests**: task, model, provider, prompt_version, input_hash, `entity_type`, `entity_id` (what the output affected), `output_ref` (e.g. `job_analyses:<id>`), status (`ok|invalid_output|error|rate_limited|quota_exhausted|cached`), reported_confidence numeric nullable, validation_outcome (`passed|corrected|failed`), tokens_in, tokens_out, latency_ms, cost_estimate, error, at. Index (input_hash,task), (entity_type, entity_id). Retention 90 days.
+- **user_corrections**: entity_type, entity_id, field, old_value jsonb, new_value jsonb, reason text, source_review_request_id nullable, at. Append-only.
 - **ai_cache**: cache_key unique (task+schema_version+input_hash), output jsonb, created_at.
 - **system_settings**: key pk, value jsonb, updated_by.
 - **audit_logs**: actor, action, entity_type, entity_id, details jsonb, at. No updates/deletes (revoke via trigger raising exception on UPDATE/DELETE).
@@ -102,4 +107,20 @@ No `user_id` columns. Single row `candidate_profiles`. (If multi-user ever neede
 | Current job/app status | `jobs.status` / `applications.status`; history tables are derived log |
 | Workflow progress | `workflow_checkpoints` |
 | Queue state | pg-boss schema |
-| Settings/policies | `system_settings`, `policy_rules`, `autonomy_policies` |
+| Resume files | `resume_versions` (+ `data/resumes/`), immutable |
+| Company registry/monitoring | `companies`, `company_career_pages`, `company_monitors` |
+
+## 12. Traceability matrix (what is recorded, where)
+| Thing to trace | Recorded in |
+|----------------|-------------|
+| Source of a job | `job_source_listings`, `job_snapshots` (raw), `jobs.application_url` |
+| Origin of a company / board | `companies.origin/origin_ref`, `company_career_pages.detected_via`, `company_probe_candidates` |
+| Evidence | `evidence` (url, retrieved_at, excerpt, confidence, verification) → referenced by ids from evaluations/research/risk |
+| AI decision | `ai_requests` (task, model, prompt_version, input_hash, entity link, output_ref, reported_confidence, validation_outcome) + stored structured output (e.g. `job_analyses.raw_output`) |
+| Deterministic decision | `policy_decisions` (inputs, rules, results), `job_evaluations` (weights, breakdown) |
+| Confidence levels | `evidence.weight/confidence`, `salary_evidence.confidence`, `application_field_answers.confidence`, `ai_requests.reported_confidence` (informational only) |
+| User corrections | `user_corrections`, `human_review_responses`, `audit_logs`, `profile_revisions` |
+| Automation actions | `agent_execution_logs`, `application_events`, `application_tasks`, `application_submissions` |
+| Authorizations | `application_authorizations`, `audit_logs` |
+| Resume used | `resume_attachments` (version + sha256 at attach time) |
+| Status changes | `job_status_history`, `application_events` |

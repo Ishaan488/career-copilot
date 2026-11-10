@@ -1,35 +1,48 @@
 # 01 — Phase 0: Repository & Environment Audit
 
-Audit date: 2026-11-10. Machine: Windows 11 (user's personal laptop).
+Audit date: 2026-11-10 (updated after user chose WSL2 as primary environment, Q10/Q11).
 
 ## 1. Repository
-- Location: `E:\personal\career-copilot` — **new, empty repo** (`git init` done, `.gitignore` and `README.md` only). Nothing to reuse or protect.
-- Sibling projects in `E:\personal` (e.g. `talentra-database`, `interview-prep`, `reachinbox-email-scheduler`, `personal-file-task-assistant`) are **unrelated and MUST NOT be modified or imported**. They may be consulted read-only for ideas only if the user asks.
+- `E:\personal\career-copilot` — new repo, docs only. Sibling projects in `E:\personal` are unrelated; MUST NOT be modified or imported.
+- Q13 (open): move canonical working tree to WSL ext4 `~/dev/career-copilot`.
 
-## 2. Toolchain detected
-| Tool | Version | Verdict |
-|------|---------|---------|
-| Node.js | v22.21.1 | ✅ LTS, meets Next.js 15 / Playwright / pg-boss needs |
-| npm | 10.9.4 | ✅ Use npm (no pnpm detected; avoids extra install) |
-| Git | 2.46.1 | ✅ |
-| PostgreSQL client (`psql`) | 18.1 | ✅ client present. **Unverified:** whether a Postgres *server* is running locally. M0 task verifies. |
-| Docker | 29.3.1 | ✅ available as fallback to run Postgres (single container `postgres:17-alpine`) |
-| Python | 3.11.0 | ⛔ Not used (ADR-008) |
-| WSL2 Ubuntu | **not verified** (first audit command was interrupted) | M0 task verifies with `wsl -l -v`. Project MUST run natively on Windows too. |
+## 2. Windows host
+| Item | Finding |
+|------|---------|
+| OS | Windows 11, 15.8 GB RAM, ~52 GB free on E: |
+| Node / npm | v22.21.1 / 10.9.4 (Windows) — **not used for dev** (WSL is primary) |
+| Git | 2.46.1 |
+| Docker Desktop | 29.3.1 installed, **stopped** → not used |
+| Python | 3.11 → not used |
+| PostgreSQL (Windows) | 18.1 service `postgresql-x64-18` Running, Automatic; `port=5432`, `listen_addresses='*'`, `max_connections=100`, `shared_buffers=128MB` |
 
-## 3. Decisions driven by the audit
-1. **Native Windows Node + local Postgres** is the primary dev path; WSL2 is optional and supported (no Windows-only APIs; use `node:path`, no shell scripts required — use npm scripts + `tsx`).
-2. Postgres: prefer the already-installed Postgres 18 server if running; else `docker compose up db` (compose file provided, single service, 256MB memory limit hint). Both are valid; connection is `DATABASE_URL` only.
-3. Resource limits: one Node process for web+API, one for worker, one on-demand Chromium. No Redis/Kafka/containers beyond optional Postgres.
-4. No existing code → greenfield scaffold in M0.
+## 3. WSL2 findings (distro `Ubuntu-D`)
+| Item | Finding |
+|------|---------|
+| Version | WSL2, Ubuntu 24.04.4 LTS, **systemd enabled** (`/etc/wsl.conf`), default user `ishaan` |
+| Resources | ~7.8 GB RAM visible, ~948 GB disk free on ext4 |
+| Node | **not installed** in WSL (`node: command not found`). `npm` resolves to the Windows npm via PATH interop → misleading; must install Node via nvm |
+| Git | 2.43.0 |
+| PostgreSQL | not installed |
+| Windows interop | PATH appended (leak) — recommend `appendWindowsPath=false` |
+| WSLg (headed browser) | **not verified** → M0 task |
 
-## 4. Reuse / change / missing / unsuitable
-- Reuse: nothing.
-- Missing: everything (scaffold, DB, UI, workers).
-- Technically unsuitable: Python (not needed); microservices; Redis queues.
+## 4. PostgreSQL decision (Q11)
+Options considered:
+1. Reuse Windows PG 18: version suitable and running, but listens on all interfaces, lives outside the WSL dev environment, cross-OS networking (NAT/mirrored mode dependent), and DB backups/ownership split across OSes. **Rejected** for this project.
+2. Docker: avoided per user.
+3. **Native PostgreSQL 16 inside WSL2 via apt (chosen):** lightest reliable setup, systemd-managed, localhost-only, same OS as Node/Playwright, portable to a Linux VPS.
+Minimum supported: PostgreSQL ≥ 15 (uses `gen_random_uuid()`, `pg_trgm`).
+Informational for the user: the Windows PG 18 service accepts connections on all interfaces; consider restricting `listen_addresses`/firewall (not changed by this project).
 
-## 5. Open verification items for M0 (agent must run and record results here)
-- [ ] `wsl -l -v` result
-- [ ] Postgres 18 server running? (`pg_isready`) which port, which superuser
-- [ ] Free disk on E: and RAM (`Get-PSDrive E`, `Get-CimInstance Win32_ComputerSystem`)
-- [ ] Chromium download via `npx playwright install chromium` succeeds
+## 5. M0 verification checklist (agent fills results here)
+- [ ] User ran doc 16 §1 (nvm Node 22, apt postgresql, Playwright deps) — `which node` under `~/.nvm`
+- [ ] `psql` connects as role `career` to `career_copilot` and `career_copilot_test`
+- [ ] Extensions available: `pg_trgm`
+- [ ] `npx playwright install chromium` succeeded; headless smoke OK
+- [ ] WSLg headed smoke (`BROWSER_HEADLESS=false`) OK / not available (record)
+- [ ] Repo at `~/dev/career-copilot`, `npm install` speed acceptable
+- [ ] Idle RAM measured
+
+## 6. Reuse / change / missing
+Reuse: nothing. Missing: Node in WSL, PG in WSL, entire codebase. Unsuitable: `/mnt/e` as a working directory; Windows PATH leaking into WSL.

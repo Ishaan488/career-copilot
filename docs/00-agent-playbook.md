@@ -13,6 +13,11 @@ You are building **Career Copilot**. Follow this file strictly.
 8. Never claim something works unless a test or a command you ran proved it. Report failures honestly.
 9. When a decision affects security, legality, money, or user authorization and docs don't say → STOP and ask the user.
 10. Do not add a dependency not listed in doc 05 §4 without writing an ADR (`docs/adr/`) first.
+11. **Never generate, rewrite, tailor, parse, or modify resumes (Q8).** Store, preview, select, and attach the user's uploaded PDF byte-for-byte.
+12. **Never auto-answer or call AI on EEO/demographic, legal, consent, bond, work-authorization, salary, notice-period, relocation, background-check, or sensitive fields (Q12).** Always route to Human Review.
+13. **Never hardcode a company list (Q1).** Keep `company-discovery` separate from `discovery` (jobs) so companies can be discovered and monitored even with zero openings.
+14. **Non-AI functionality must work when Gemini is unavailable or out of quota (Q2).** Never let an AI failure block discovery, manual flows, resume management, review, or application preparation.
+15. Read `19-user-decisions.md` — it is authoritative and overrides any conflicting text.
 
 ## 2. Working loop (per milestone)
 1. Read the milestone in `17-implementation-plan.md` and its "Read" docs only.

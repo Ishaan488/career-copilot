@@ -5,7 +5,7 @@
 1. `web` — Next.js (App Router) serving UI + REST route handlers + SSE.
 2. `worker` — Node process running pg-boss workers + scheduler + browser automation. Chromium launched on demand.
 
-PostgreSQL is the only stateful dependency. Files on local disk under `data/` behind a `FileStorage` interface.
+PostgreSQL is the only stateful dependency (native PostgreSQL 16 inside WSL2, no Docker). Files on local disk under `data/` behind a `FileStorage` interface. Primary dev/runtime environment: **WSL2 Ubuntu 24.04**; working tree on ext4 (`~/dev/career-copilot`).
 
 ```mermaid
 flowchart LR
@@ -51,14 +51,15 @@ flowchart TD
   end
   subgraph L2[Layer 2 data owners]
     profile[profile + preferences + autonomy]
-    discovery[discovery]
     companies[companies]
+    cdisc[company-discovery]
+    discovery[job discovery]
   end
   subgraph L3[Layer 3 reasoning]
     ai[ai provider]
     policy[policy engine]
     intel[intelligence]
-    resume[resume]
+    resume[resume manager - no generation]
   end
   subgraph L4[Layer 4 action]
     review[human-review]
@@ -80,18 +81,21 @@ Explicit allowed imports:
 | settings, audit, queue | shared |
 | notification | shared, settings, queue, audit |
 | profile | shared, audit, settings |
-| companies | shared, audit |
-| discovery | shared, queue, audit, companies, profile(prefs read), policy(prefilter) |
+| companies (entity + domains + evidence-free registry data) | shared, audit |
+| **company-discovery** | shared, queue, audit, settings, companies |
+| discovery (jobs) | shared, queue, audit, companies, company-discovery(read boards), profile(prefs read), policy(prefilter) |
 | ai | shared, settings, audit (no domain knowledge of jobs) |
 | policy | shared, settings (**no ai, no discovery**) |
-| intelligence | shared, ai, profile, companies, discovery(read), policy, audit |
-| resume | shared, ai, profile, intelligence(read), audit |
+| intelligence | shared, ai, profile, companies, company-discovery(read), discovery(read), policy, audit |
+| resume (manager) | shared, audit, settings (**no ai, no profile**) |
 | human-review | shared, queue, notification, audit |
 | browser | shared, audit (no business modules; generic automation primitives + portal drivers receive plain data) |
 | application | shared, queue, profile, resume, intelligence, policy, human-review, browser, notification, audit, discovery(read) |
 | tracking | shared, application(read/transition API), notification, audit |
 | api | any module public API |
 | ui | only `/api` over HTTP (no module imports except shared types/zod schemas) |
+
+**Company Discovery vs Job Discovery:** `company-discovery` answers "which companies exist, where is their career page/ATS board, are they alive?" and runs even with zero openings. `discovery` answers "what jobs are on the boards/sources?". The only coupling: `discovery` reads registered boards from `company-discovery` (read API) and `company-discovery` never imports `discovery`. Job-URL imports in `discovery` emit a queue event `company.propose` handled by `company-discovery`.
 
 Circular needs (e.g. review needs to resume application workflow) are solved with **events via the queue**: review enqueues `workflow.resume` with `{workflowId}`; the `application` module registers the handler. Review never imports application.
 
@@ -111,10 +115,9 @@ Circular needs (e.g. review needs to resume application workflow) are solved wit
 | AI | `@google/genai` behind `AIProvider` | |
 | Browser | `playwright` (chromium only) | |
 | HTML parsing | `cheerio` | job pages/feeds |
-| Text extraction | `pdf-parse`, `mammoth` (docx) | resume import |
-| DOCX gen | `docx` | |
-| PDF gen | Playwright `page.pdf()` | no extra dep |
-| IMAP | `imapflow` + `mailparser` | read-only |
+| Text extraction | — | none (no resume parsing, Q8) |
+| PDF/DOCX generation | — | **none** (no resume generation, Q8). Lint bans `docx`, `pdfkit`, `pdf-lib`, `pdf-parse`, `mammoth` imports |
+| IMAP | `imapflow` + `mailparser` | optional, only if user opts in (Q15); install at M13 only if opted |
 | SMTP | `nodemailer` | optional |
 | Telegram | plain `fetch` to Bot API | no lib |
 | Password hashing | `argon2` (or node `scrypt` if native build fails) | |
@@ -142,7 +145,7 @@ career-copilot/
 ├─ src/
 │  ├─ app/                        # Next.js App Router
 │  │  ├─ (app)/                   # authenticated shell
-│  │  │  ├─ dashboard/ jobs/ jobs/[id]/ companies/[id]/ recommended/ saved/
+│  │  │  ├─ dashboard/ jobs/ jobs/[id]/ companies/ companies/[id]/ recommended/ saved/
 │  │  │  ├─ applications/ applications/[id]/ review/ review/[id]/ tracker/
 │  │  │  ├─ resumes/ profile/ preferences/ automation/ sources/
 │  │  │  ├─ notifications/ activity/ settings/ onboarding/
@@ -150,7 +153,7 @@ career-copilot/
 │  │  └─ api/                     # route handlers (thin: parse→service→respond)
 │  ├─ components/                 # ui primitives + feature components
 │  ├─ modules/
-│  │  ├─ profile/  ├─ discovery/  ├─ companies/  ├─ ai/  ├─ policy/
+│  │  ├─ profile/  ├─ companies/  ├─ company-discovery/  ├─ discovery/  ├─ ai/  ├─ policy/
 │  │  ├─ intelligence/  ├─ resume/  ├─ human-review/  ├─ application/
 │  │  ├─ browser/  ├─ tracking/  ├─ notification/  ├─ queue/  ├─ audit/  ├─ settings/
 │  ├─ shared/                     # config, logger, errors, clock, ids, db, storage, redact, http
@@ -173,13 +176,17 @@ career-copilot/
 npm scripts: `dev` (web), `dev:worker`, `dev:all`, `build`, `start`, `typecheck`, `lint`, `check:deps`, `test`, `test:int`, `test:e2e`, `test:failure`, `db:generate`, `db:migrate`, `db:reset:test`, `verify:env`.
 
 ## 6. Key data flows
-**Discovery:** scheduler → `discovery.sync{sourceId}` → adapter.fetch → snapshots → normalize → dedupe → `jobs` (+events) → pre-filter policy → enqueue `intel.analyze{jobId}`.
-**Intelligence:** analyze(JD) → `job_analyses` → `company.research{companyId}` (if stale) → `comp.research` → `intel.evaluate{jobId}` (pure eligibility/score/risk/recommendation) → `policy.evaluate` → status/shortlist/notify.
-**Application:** shortlist → `application.create` → workflow runner steps (doc 10 §4) ↔ HITL pauses → submit gate → verify → tracking.
-**Monitoring:** scheduler → `tracking.poll_email` → classify → suggestions/events → notifications.
+**Company discovery:** `company.propose`/manual add/CSV → `companies` (status discovered) → user accepts → `company.detect` (career page + ATS) and `company.probe` (slug probing, user confirm) → `company_career_pages` + `company_monitors` → derived `job_sources` → scheduled `company.check`.
+**Job discovery:** scheduler → `discovery.sync{sourceId}` → adapter.fetch → snapshots → normalize → dedupe → `jobs` (+events) → pre-filter → enqueue `intel.analyze{jobId}` (skipped/deferred if AI unavailable; deterministic data still visible).
+**Intelligence:** analyze(JD) → `job_analyses` → `company.research{companyId}` (if stale; `SearchProvider`) → `comp.research` → `intel.evaluate{jobId}` (pure) → `policy.evaluate` → status/shortlist/notify.
+**Application (L2):** shortlist → `application.create` (dedupe guard) → workflow runner steps (doc 10 §4) ↔ HITL pauses → summary approval → manual handover **or** per-application authorized submit → verify → tracking.
+**Resume:** upload PDF → store original + sha256 → select per application → attach original file.
 
 ## 7. Failure domains
-DB down → web returns 503 health, worker pg-boss retries connection; no data loss. Worker down → UI banner; queued jobs wait. AI down → tasks retry/backoff, jobs stay `under_analysis`; nothing proceeds on unvalidated output. Browser crash → step failure, workflow retried from last checkpoint (never from submit).
+DB down → web returns 503 health, worker pg-boss retries connection; no data loss. Worker down → UI banner; queued jobs wait. **AI down/quota exhausted → AI tasks retry/backoff or defer; all non-AI features continue (degraded mode, doc 11 §10).** Browser crash → step failure, workflow retried from last checkpoint (never from submit). Network interruption → retryable error class, backoff.
+
+## 9. Representing "unknown" (Q: never fabricate)
+`type Unknown = { kind: 'unknown'; reason?: string }`. Domain functions that depend on optional data return tri-state results (`pass | fail | unknown`) or `Known<T> | Unknown`. DB uses NULL (or explicit `unknown` enum members for assessments). UI renders "Unknown" explicitly (never 0, "N/A", or empty). Mapper/scorers must never coerce unknown to a default value except where a doc states a flagged neutral (e.g., unknown comp scores 50 **and** is labeled "unknown — neutral score").
 
 ## 8. Real-time
 SSE endpoint streams `{type, entity, id}` events fed by Postgres `LISTEN/NOTIFY` channel `app_events`. Clients invalidate TanStack queries. SSE is hint-only; correctness never depends on it.

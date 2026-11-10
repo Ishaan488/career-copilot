@@ -25,8 +25,9 @@ Personal, local-first, AI-assisted job discovery → evaluation → application 
 | 14 | [ui-ux](14-ui-ux.md) | Pages, components, interaction rules, design tokens |
 | 15 | [testing](15-testing.md) | Test strategy, mandatory test cases, failure injection |
 | 16 | [deployment-ops](16-deployment-ops.md) | Windows/WSL2 setup, env vars, run, backup |
-| 17 | [implementation-plan](17-implementation-plan.md) | **Ordered milestones M0–M13**, each with tasks + acceptance tests |
+| 17 | [implementation-plan](17-implementation-plan.md) | **Ordered milestones M0–M14**, each with tasks + acceptance tests |
 | 18 | [risks-and-open-decisions](18-risks-and-open-decisions.md) | Risks, assumptions, questions needing the user |
+| 19 | [user-decisions](19-user-decisions.md) | **Authoritative log of user decisions (Q1–Q12 + additional requirements)** |
 
 ## How to hand this to a small agent
 Give it ONE milestone at a time from `17-implementation-plan.md` plus docs 00, 05, and only the docs that milestone lists under "Read". Do not give the whole doc set at once.

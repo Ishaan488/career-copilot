@@ -21,7 +21,12 @@
 | NFR-PORT-1 | Portability | Runs on Windows native, WSL2, Linux VPS using only `.env` differences | doc 16 |
 | NFR-DATA-1 | Data | All timestamps `timestamptz` UTC; UI converts to configured TZ | lint + review |
 | NFR-DATA-2 | Data | Migrations forward-only, reviewed SQL; schema matches Drizzle | `drizzle-kit check` |
-| NFR-DATA-3 | Data | Nightly local backup `pg_dump` + `data/` files (doc 16) | script test |
+| NFR-DATA-3 | Data | Daily local backup `pg_dump` + `data/` files (doc 16 §7) | script test |
 | NFR-A11Y-1 | Accessibility | Keyboard navigable, labels on inputs, contrast AA, focus visible | axe in e2e |
 | NFR-UX-1 | UX | Every async action shows loading + success/error state | review |
 | NFR-LEGAL-1 | Compliance | Respect robots.txt/ToS; no CAPTCHA/login bypass | design + tests |
+| NFR-DEG-1 | Resilience | With Gemini unavailable/quota exhausted/no key, all non-AI features (company & job discovery, import, profile, review, resume manager, application prep except AI suggestions, tracking, notifications) keep working; AI-dependent items show "pending AI" and retry | T-DEG |
+| NFR-RET-1 | Data | Retention defaults per doc 16 §9, configurable; retention job never deletes application records/resume PDFs | integration test |
+| NFR-TRC-1 | Traceability | Every AI output, user correction and automation action traceable (doc 08 §12) | integration test |
+| NFR-ENV-1 | Portability | Primary env WSL2 Ubuntu 24.04 + native PostgreSQL ≥15; no Docker required; no use of Windows-only paths/binaries; works on `/home` ext4 | M0 checklist |
+| NFR-RED-1 | Privacy | Logs and screenshots redacted where possible (input values masked in screenshots) | T-REDACT + browser test |
