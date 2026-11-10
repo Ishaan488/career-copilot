@@ -15,6 +15,13 @@
       "when": 1794328821894,
       "tag": "0001_flawless_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794330473108,
+      "tag": "0002_natural_squirrel_girl",
+      "breakpoints": true
     }
   ]
 }
