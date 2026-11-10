@@ -41,9 +41,9 @@ Informational for the user: the Windows PG 18 service accepts connections on all
 - [x] Unit test suite (smoke, verify-env, dependency-rules) green (`npm test`)
 - [x] Next.js 15 production build green (`npm run build`)
 - [x] Playwright Chromium and headless shell downloaded to `~/.cache/ms-playwright`
-- [ ] Native PostgreSQL 16 in WSL2 installed & running (requires `sudo apt install postgresql`)
-- [ ] Playwright system dependencies installed in WSL2 (requires `sudo apt install libnspr4 ...` or `playwright install-deps`)
-- [ ] PostgreSQL role `career` and databases `career_copilot`, `career_copilot_test` created
+- [x] Native PostgreSQL 16 in WSL2 installed & running (`PostgreSQL 16.15 on Ubuntu 24.04.1`)
+- [x] Playwright system dependencies installed in WSL2 & smoke test passed (`tests/e2e/browser-smoke.test.ts`)
+- [x] PostgreSQL role `career` and databases `career_copilot`, `career_copilot_test` created with `pg_trgm` extension enabled
 
 ## 6. Reuse / change / missing
 Reuse: nothing. Missing: Node in WSL, PG in WSL, entire codebase. Unsuitable: Windows PATH leaking into WSL.
