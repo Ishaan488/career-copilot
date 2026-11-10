@@ -26,6 +26,8 @@ export function Sidebar() {
         { label: 'Resumes', href: '/resumes' },
         { label: 'Profile', href: '/profile' },
         { label: 'Preferences', href: '/preferences' },
+        { label: 'Autonomy', href: '/autonomy' },
+        { label: 'Reusable Q&A', href: '/reusable-answers' },
       ],
     },
     {

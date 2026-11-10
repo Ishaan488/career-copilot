@@ -12,7 +12,7 @@ async function resetTestDb() {
   const client = await pool.connect();
 
   try {
-    await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+    await client.query('DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
     await client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
 
     const db = drizzle(pool);
