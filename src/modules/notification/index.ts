@@ -1,2 +1,2 @@
-// Notification module public API
-export const NOTIFICATION_MODULE = 'notification';
+export * from './schemas';
+export * from './service';

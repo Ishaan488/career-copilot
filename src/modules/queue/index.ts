@@ -1,2 +1,2 @@
-// Persistent queue module public API
-export const QUEUE_MODULE = 'queue';
+export * from './schemas';
+export * from './service';

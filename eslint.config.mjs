@@ -39,7 +39,10 @@ export default [
         },
       ],
       'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }
+      ],
       '@typescript-eslint/no-explicit-any': 'error',
     },
   },

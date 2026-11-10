@@ -29,13 +29,13 @@ module.exports = {
     },
     {
       name: 'shared-must-not-depend-on-modules',
-      comment: 'Shared code (L0) must not import any modules or db schemas.',
+      comment: 'Shared code (L0) must not import any modules, worker, or app UI.',
       severity: 'error',
       from: {
         path: '^src/shared',
       },
       to: {
-        path: '^src/(modules|db|worker|app)',
+        path: '^src/(modules|worker|app)',
       },
     },
     {

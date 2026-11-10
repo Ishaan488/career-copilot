@@ -13,7 +13,7 @@ describe('verify-env', () => {
   });
 
   it('passes when required environment variables are set', () => {
-    process.env.NODE_ENV = 'development';
+    (process.env as Record<string, string>).NODE_ENV = 'development';
     process.env.APP_ORIGIN = 'http://127.0.0.1:3000';
     process.env.DATABASE_URL = 'postgres://career:career_password@127.0.0.1:5432/career_copilot';
     process.env.TEST_DATABASE_URL = 'postgres://career:career_password@127.0.0.1:5432/career_copilot_test';

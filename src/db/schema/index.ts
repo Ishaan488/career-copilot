@@ -1,2 +1,1 @@
-// Drizzle database schema root
-export * from './stub.js';
+export * from './infra';
