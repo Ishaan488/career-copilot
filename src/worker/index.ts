@@ -1,7 +1,9 @@
-import { getQueue, startHeartbeat, closeQueue } from '@/modules/queue';
+import { getQueue, startHeartbeat, closeQueue, registerHandler } from '@/modules/queue';
 import { logger } from '@/shared/logger';
 import { closeDbPool } from '@/shared/db';
 import { generateId } from '@/shared/ids';
+import { runCompanyCheck } from '@/modules/company-discovery';
+import { z } from 'zod';
 
 const workerId = `worker_${generateId().slice(0, 8)}`;
 
@@ -10,6 +12,16 @@ async function startWorker() {
 
   // Start pg-boss queue
   await getQueue();
+
+  // Register company.check job handler
+  await registerHandler(
+    'company.check',
+    z.object({ companyId: z.string().uuid() }),
+    async (payload) => {
+      logger.info({ companyId: payload.companyId }, '[Worker] Running scheduled company check');
+      await runCompanyCheck(payload.companyId, 'system');
+    }
+  );
 
   // Start heartbeat
   await startHeartbeat(workerId, {

@@ -126,3 +126,83 @@ export async function safeFetch(urlStr: string, options: SafeFetchOptions = {}):
     details: { url: urlStr },
   });
 }
+
+interface RobotsCacheEntry {
+  disallows: string[];
+  expiresAt: number;
+}
+const robotsCache = new Map<string, RobotsCacheEntry>();
+
+export function clearRobotsCache(): void {
+  robotsCache.clear();
+}
+
+export function parseRobotsTxt(robotsText: string, targetUserAgent = '*'): string[] {
+  const lines = robotsText.split(/\r?\n/);
+  let currentUserAgentApplies = false;
+  const disallows: string[] = [];
+
+  for (const rawLine of lines) {
+    const line = (rawLine.split('#')[0] || '').trim();
+    if (!line) continue;
+    const [directive, ...rest] = line.split(':');
+    const key = directive?.trim().toLowerCase();
+    const value = rest.join(':').trim();
+
+    if (key === 'user-agent') {
+      const ua = value.toLowerCase();
+      if (ua === '*' || ua.includes('careercopilot') || (targetUserAgent !== '*' && ua.includes(targetUserAgent.toLowerCase()))) {
+        currentUserAgentApplies = true;
+      } else {
+        currentUserAgentApplies = false;
+      }
+    } else if (currentUserAgentApplies && key === 'disallow') {
+      if (value) {
+        disallows.push(value);
+      }
+    }
+  }
+
+  return disallows;
+}
+
+export async function isRobotsAllowed(urlStr: string, userAgent = 'CareerCopilot'): Promise<boolean> {
+  try {
+    const url = new URL(urlStr);
+    const origin = url.origin;
+    const now = Date.now();
+
+    let cached = robotsCache.get(origin);
+    if (!cached || cached.expiresAt < now) {
+      const robotsUrl = `${origin}/robots.txt`;
+      try {
+        const res = await safeFetch(robotsUrl, { timeoutMs: 5000, maxSizeBytes: 500 * 1024 });
+        if (res.ok) {
+          const text = await res.text();
+          const disallows = parseRobotsTxt(text, userAgent);
+          cached = { disallows, expiresAt: now + 3600 * 1000 };
+          robotsCache.set(origin, cached);
+        } else {
+          cached = { disallows: [], expiresAt: now + 3600 * 1000 };
+          robotsCache.set(origin, cached);
+        }
+      } catch {
+        // If robots.txt cannot be fetched or network error, default to allowed
+        cached = { disallows: [], expiresAt: now + 600 * 1000 };
+        robotsCache.set(origin, cached);
+      }
+    }
+
+    const pathname = url.pathname || '/';
+    for (const rule of cached.disallows) {
+      if (rule === '/' || pathname.startsWith(rule)) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch {
+    return true;
+  }
+}
+

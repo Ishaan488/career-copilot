@@ -22,6 +22,13 @@
       "when": 1794330473108,
       "tag": "0002_natural_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794332328188,
+      "tag": "0003_fresh_elektra",
+      "breakpoints": true
     }
   ]
 }
