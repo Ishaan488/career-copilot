@@ -12,6 +12,7 @@ import {
 } from '@/db/schema';
 import { getBoardsForDiscovery } from '@/modules/company-discovery';
 import { getPreferences } from '@/modules/profile';
+import { enqueue } from '@/modules/queue';
 import {
   SeniorityLevel,
   WorkMode,
@@ -448,6 +449,13 @@ export async function runSourceSync(sourceId: string): Promise<SyncRunResult> {
                 reason: `Initial discovery via source '${source.name}'`,
               });
 
+              // Trigger async AI analysis if eligible
+              try {
+                await enqueue('intel.analyze', { jobId: newJob.id }, { singletonKey: `intel.analyze.${newJob.id}` });
+              } catch {
+                // Queue may not be running in isolated test mode
+              }
+
               // Create listing
               const [newListing] = await db
                 .insert(jobSourceListings)
@@ -724,6 +732,12 @@ export async function importJobUrl(
     reason: `Manual URL import from ${url}`,
   });
 
+  try {
+    await enqueue('intel.analyze', { jobId: newJob.id }, { singletonKey: `intel.analyze.${newJob.id}` });
+  } catch {
+    // Queue may not be running in isolated mode
+  }
+
   // Create listing
   const [listing] = await db
     .insert(jobSourceListings)
@@ -841,6 +855,12 @@ export async function createManualJob(
     actor: 'user',
     reason: 'Manual job entry',
   });
+
+  try {
+    await enqueue('intel.analyze', { jobId: newJob.id }, { singletonKey: `intel.analyze.${newJob.id}` });
+  } catch {
+    // Queue may not be running in isolated mode
+  }
 
   const [listing] = await db
     .insert(jobSourceListings)

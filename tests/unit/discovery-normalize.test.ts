@@ -8,7 +8,6 @@ import {
   parseEmploymentType,
   parseCompensation,
   hashJobDescription,
-  decodeHtmlEntities,
 } from '@/modules/discovery';
 
 describe('Discovery Normalization (Pure Domain)', () => {

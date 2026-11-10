@@ -95,6 +95,7 @@ export const jobs = pgTable(
     canonicalUrl: text('canonical_url'),
     status: text('status').default('new').notNull(), // doc 10: 'new' | 'under_analysis' | 'recommended' | 'shortlisted' | 'saved' | 'rejected' | 'expired' | 'closed' | 'applied' | 'archived'
     statusReason: text('status_reason'),
+    analysisStatus: text('analysis_status').default('pending').notNull(), // 'pending' | 'pending_ai' | 'analyzing' | 'completed' | 'failed' | 'skipped'
     firstDiscoveredAt: timestamp('first_discovered_at', { withTimezone: true }).defaultNow().notNull(),
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }).defaultNow().notNull(),
     descriptionHash: text('description_hash').notNull(),
@@ -106,6 +107,7 @@ export const jobs = pgTable(
   },
   (t) => [
     index('jobs_status_idx').on(t.status),
+    index('jobs_analysis_status_idx').on(t.analysisStatus),
     index('jobs_company_id_idx').on(t.companyId),
     index('jobs_posted_at_idx').on(t.postedAt),
     index('jobs_canonical_url_idx').on(t.canonicalUrl),

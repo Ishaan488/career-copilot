@@ -27,6 +27,17 @@ export default [
       '@typescript-eslint': tsPlugin,
     },
     rules: {
+      'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }
+      ],
+      '@typescript-eslint/no-explicit-any': 'error',
+    },
+  },
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    rules: {
       'no-restricted-imports': [
         'error',
         {
@@ -35,15 +46,13 @@ export default [
               group: ['@/modules/*/**'],
               message: 'Import from the module public API (@/modules/<module-name>) only.',
             },
+            {
+              group: ['**/tests/**', '../tests/**', '../../tests/**', '**/fake*'],
+              message: 'Test-only code/fakes must not be imported in application code.',
+            },
           ],
         },
       ],
-      'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
-      '@typescript-eslint/no-unused-vars': [
-        'error',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }
-      ],
-      '@typescript-eslint/no-explicit-any': 'error',
     },
   },
 ];

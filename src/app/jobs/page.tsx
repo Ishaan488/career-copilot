@@ -18,7 +18,38 @@ import {
   RefreshCw,
   Bookmark,
   Send,
+  Sparkles,
+  AlertTriangle,
+  Cpu,
 } from 'lucide-react';
+
+interface JobSkill {
+  id: string;
+  name: string;
+  normalizedName: string;
+  level: string;
+  mandatory: boolean;
+  quote: string | null;
+  minYears: number | null;
+}
+
+interface JobAnalysisData {
+  id: string;
+  seniority: string | null;
+  domain: string | null;
+  responsibilities: string[];
+  techStack: string[];
+  experienceMinYears: number | null;
+  experienceMaxYears: number | null;
+  educationRequirements: Array<{ degree: string; field?: string; mandatory: boolean }>;
+  employmentType: string | null;
+  locationConstraints: string[];
+  compMentions: Array<{ text: string; min?: number; max?: number; currency?: string; period?: string }>;
+  ambiguities: string[];
+  injectionSuspected: boolean;
+  skills: JobSkill[];
+  createdAt: string;
+}
 
 interface JobItem {
   id: string;
@@ -96,6 +127,9 @@ export default function JobsPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
+  const [analysis, setAnalysis] = useState<JobAnalysisData | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [selectedSkillQuote, setSelectedSkillQuote] = useState<{ name: string; quote: string | null } | null>(null);
 
   // Import modal state
   const [importUrl, setImportUrl] = useState('');
@@ -136,10 +170,12 @@ export default function JobsPage() {
     fetchJobs();
   }, [activeTab, seniorityFilter, workModeFilter]);
 
-  // Fetch job detail
+  // Fetch job detail & AI analysis
   useEffect(() => {
     if (!selectedJobId) {
       setJobDetail(null);
+      setAnalysis(null);
+      setSelectedSkillQuote(null);
       return;
     }
     setLoadingDetail(true);
@@ -149,7 +185,41 @@ export default function JobsPage() {
         if (!data.error) setJobDetail(data);
       })
       .finally(() => setLoadingDetail(false));
+
+    fetch(`/api/jobs/${selectedJobId}/analysis`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setAnalysis(data))
+      .catch(() => setAnalysis(null));
   }, [selectedJobId]);
+
+  const handleAnalyzeJob = async (force = false) => {
+    if (!selectedJobId) return;
+    setAnalyzing(true);
+    try {
+      const res = await fetch(`/api/jobs/${selectedJobId}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
+      if (res.ok) {
+        const aRes = await fetch(`/api/jobs/${selectedJobId}/analysis`);
+        if (aRes.ok) {
+          const aData = await aRes.json();
+          setAnalysis(aData);
+        }
+        const jRes = await fetch(`/api/jobs/${selectedJobId}`);
+        if (jRes.ok) {
+          const jData = await jRes.json();
+          setJobDetail(jData);
+          setJobs((prev) => prev.map((j) => (j.id === jData.id ? { ...j, status: jData.status } : j)));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to analyze job', err);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   const handleStatusTransition = async (toStatus: string, reason?: string) => {
     if (!selectedJobId) return;
@@ -294,6 +364,13 @@ export default function JobsPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <a
+            href="/ai/usage"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg shadow-sm hover:bg-indigo-100 active:scale-[0.98] transition-all"
+          >
+            <Cpu className="w-4 h-4 text-indigo-600" />
+            AI Usage
+          </a>
           <button
             onClick={() => setShowImportModal(true)}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg shadow-sm hover:bg-slate-50 active:scale-[0.98] transition-[transform,background-color] duration-150"
@@ -500,6 +577,15 @@ export default function JobsPage() {
             {jobDetail && (
               <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleAnalyzeJob(Boolean(analysis))}
+                    disabled={analyzing}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 active:scale-[0.98] transition-all shadow-sm"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} />
+                    {analyzing ? 'Analyzing...' : analysis ? 'Re-analyze' : 'Analyze (AI)'}
+                  </button>
+
                   {jobDetail.status !== 'shortlisted' && (
                     <button
                       onClick={() => handleStatusTransition('shortlisted', 'Shortlisted by user')}
@@ -574,6 +660,155 @@ export default function JobsPage() {
                       </span>
                     </div>
                   </div>
+
+                  {/* AI Intelligence Analysis Section */}
+                  {analysis ? (
+                    <div className="p-5 bg-gradient-to-br from-indigo-50/50 via-white to-slate-50 border border-indigo-100 rounded-2xl shadow-sm space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+                            <Sparkles className="w-4 h-4" />
+                          </span>
+                          <div>
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-indigo-950">
+                              Intelligence Analysis
+                            </h4>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              Extracted with Gemini 2.0 Flash
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {analysis.domain && (
+                            <span className="px-2 py-0.5 text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full capitalize">
+                              {analysis.domain}
+                            </span>
+                          )}
+                          {analysis.seniority && (
+                            <span className="px-2 py-0.5 text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200 rounded-full capitalize">
+                              {analysis.seniority}
+                            </span>
+                          )}
+                          {(analysis.experienceMinYears !== null || analysis.experienceMaxYears !== null) && (
+                            <span className="px-2 py-0.5 text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 rounded-full tabular-nums">
+                              {analysis.experienceMinYears ?? 0}–{analysis.experienceMaxYears ?? '+'} yrs exp
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Injection Warning Alert */}
+                      {analysis.injectionSuspected && (
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-semibold block">Untrusted Content Warning</span>
+                            <span className="text-amber-800 text-[11px]">
+                              Suspicious instruction override or prompt injection attempt detected in job description.
+                              Automated actions require manual user review.
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Skills Grid */}
+                      {analysis.skills && analysis.skills.length > 0 && (
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                            Extracted Skills ({analysis.skills.length}) — Click to view source JD quote
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {analysis.skills.map((s) => (
+                              <button
+                                key={s.id}
+                                onClick={() => setSelectedSkillQuote({ name: s.name, quote: s.quote })}
+                                className={`px-2.5 py-1 text-xs rounded-lg font-medium border active:scale-[0.98] transition-all flex items-center gap-1.5 ${
+                                  s.mandatory
+                                    ? 'bg-indigo-50/80 text-indigo-900 border-indigo-200 hover:bg-indigo-100'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                <span>{s.name}</span>
+                                {s.minYears && (
+                                  <span className="text-[10px] opacity-75 tabular-nums">({s.minYears}y)</span>
+                                )}
+                                {s.mandatory && (
+                                  <span className="px-1 py-0.2 bg-indigo-200 text-indigo-900 text-[9px] rounded font-semibold uppercase">
+                                    Req
+                                  </span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Responsibilities */}
+                      {analysis.responsibilities && analysis.responsibilities.length > 0 && (
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                            Core Responsibilities
+                          </span>
+                          <ul className="space-y-1.5 text-xs text-slate-700">
+                            {analysis.responsibilities.slice(0, 5).map((r, i) => (
+                              <li key={i} className="flex items-start gap-2">
+                                <span className="text-indigo-500 mt-0.5 font-bold">•</span>
+                                <span className="leading-relaxed">{r}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Tech Stack */}
+                      {analysis.techStack && analysis.techStack.length > 0 && (
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1.5">
+                            Tech Stack Mentioned
+                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {analysis.techStack.map((tech, i) => (
+                              <span
+                                key={i}
+                                className="px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-md font-mono"
+                              >
+                                {tech}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : jobDetail.statusReason?.includes('pending_ai') ? (
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs space-y-2">
+                      <div className="flex items-center gap-2 text-amber-900 font-semibold">
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                        <span>AI Degraded Mode Active</span>
+                      </div>
+                      <p className="text-amber-800 text-[11px] leading-relaxed">
+                        Job description analysis was deferred because the AI provider is currently offline or rate-limited.
+                        Deterministic fields and listings are displayed normally. Analysis will run automatically upon recovery.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-slate-50 border border-slate-200 border-dashed rounded-xl flex items-center justify-between gap-4 text-xs">
+                      <div>
+                        <span className="font-semibold text-slate-800 block">No AI Analysis Yet</span>
+                        <span className="text-slate-500 text-[11px]">
+                          Extract skills, domain, seniority, and responsibilities with Gemini.
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleAnalyzeJob(false)}
+                        disabled={analyzing}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-medium rounded-lg transition-all shadow-sm shrink-0 inline-flex items-center gap-1.5"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} />
+                        {analyzing ? 'Analyzing...' : 'Analyze Now'}
+                      </button>
+                    </div>
+                  )}
 
                   {/* Description */}
                   <div>
@@ -818,6 +1053,48 @@ export default function JobsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Skill Quote Modal */}
+      {selectedSkillQuote && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in-0 zoom-in-95 duration-150">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wider block">
+                  Grounding Verification
+                </span>
+                <h3 className="text-base font-bold text-slate-900 mt-0.5">
+                  Skill: {selectedSkillQuote.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedSkillQuote(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">
+                Verbatim Excerpt from Job Description:
+              </span>
+              <blockquote className="text-xs text-slate-800 italic leading-relaxed border-l-2 border-indigo-400 pl-3 py-1">
+                &ldquo;{selectedSkillQuote.quote || 'No direct quote captured for this skill.'}&rdquo;
+              </blockquote>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => setSelectedSkillQuote(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 active:scale-[0.98] text-slate-700 text-xs font-medium rounded-lg transition-all"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

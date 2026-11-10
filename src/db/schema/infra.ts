@@ -119,3 +119,41 @@ export const files = pgTable('files', {
   mime: text('mime').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+// AI Requests: Traceability and audit log for all AI interactions (doc 08 §9)
+export const aiRequests = pgTable(
+  'ai_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    task: text('task').notNull(), // 'jd_analysis' | 'role_match' | ...
+    model: text('model').notNull(),
+    provider: text('provider').notNull(), // 'gemini' | 'fake'
+    promptVersion: integer('prompt_version').notNull().default(1),
+    inputHash: text('input_hash').notNull(),
+    entityType: text('entity_type'), // e.g. 'job'
+    entityId: uuid('entity_id'), // e.g. jobId
+    outputRef: text('output_ref'), // e.g. 'job_analyses:<id>'
+    status: text('status').notNull(), // 'ok'|'invalid_output'|'error'|'rate_limited'|'quota_exhausted'|'cached'|'budget_exceeded'
+    reportedConfidence: text('reported_confidence'), // stored as string/numeric
+    validationOutcome: text('validation_outcome'), // 'passed'|'corrected'|'failed'
+    tokensIn: integer('tokens_in'),
+    tokensOut: integer('tokens_out'),
+    latencyMs: integer('latency_ms'),
+    costEstimate: text('cost_estimate'),
+    error: text('error'),
+    at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('ai_requests_input_task_idx').on(t.inputHash, t.task),
+    index('ai_requests_entity_idx').on(t.entityType, t.entityId),
+    index('ai_requests_at_idx').on(t.at),
+  ]
+);
+
+// AI Cache: Deterministic caching for identical inputs and prompt/schema versions
+export const aiCache = pgTable('ai_cache', {
+  cacheKey: text('cache_key').primaryKey(), // sha256(task + schemaVersion + promptVersion + canonicalInput)
+  output: jsonb('output').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+

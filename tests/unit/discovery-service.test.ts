@@ -15,7 +15,6 @@ import {
   searchJobs,
   getJob,
   transitionJobStatus,
-  runSourceSync,
   createManualSource,
   listSources,
 } from '@/modules/discovery';
@@ -50,7 +49,7 @@ describe('Discovery Service Integration', () => {
 
       // 2. Create monitor
       await db.insert(companyMonitors).values({
-        companyId: company.id,
+        companyId: company!.id,
         enabled: true,
       });
 
@@ -58,7 +57,7 @@ describe('Discovery Service Integration', () => {
       const [careerPage] = await db
         .insert(companyCareerPages)
         .values({
-          companyId: company.id,
+          companyId: company!.id,
           url: 'https://boards.greenhouse.io/stripe',
           atsType: 'greenhouse',
           boardId: 'stripe',
@@ -75,13 +74,13 @@ describe('Discovery Service Integration', () => {
       const [source] = await db
         .select()
         .from(jobSources)
-        .where(eq(jobSources.careerPageId, careerPage.id));
+        .where(eq(jobSources.careerPageId, careerPage!.id));
 
       expect(source).toBeDefined();
-      expect(source.name).toBe('Stripe Inc (greenhouse)');
-      expect(source.type).toBe('greenhouse');
-      expect(source.origin).toBe('derived_from_company');
-      expect(source.companyId).toBe(company.id);
+      expect(source!.name).toBe('Stripe Inc (greenhouse)');
+      expect(source!.type).toBe('greenhouse');
+      expect(source!.origin).toBe('derived_from_company');
+      expect(source!.companyId).toBe(company!.id);
     });
   });
 
@@ -171,12 +170,12 @@ describe('Discovery Service Integration', () => {
         config: { feedUrl: 'https://example.com/feed.xml' },
       });
 
-      expect(source.id).toBeDefined();
-      expect(source.type).toBe('rss_feed');
+      expect(source!.id).toBeDefined();
+      expect(source!.type).toBe('rss_feed');
 
       const sources = await listSources();
       expect(sources.length).toBeGreaterThanOrEqual(1);
-      const found = sources.find((s) => s.id === source.id);
+      const found = sources.find((s) => s.id === source!.id);
       expect(found).toBeDefined();
     });
   });

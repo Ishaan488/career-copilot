@@ -36,6 +36,13 @@
       "when": 1794336761441,
       "tag": "0004_cool_wallop",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794339997889,
+      "tag": "0005_clever_tomorrow_man",
+      "breakpoints": true
     }
   ]
 }

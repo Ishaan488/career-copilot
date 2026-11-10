@@ -4,6 +4,7 @@ import { closeDbPool } from '@/shared/db';
 import { generateId } from '@/shared/ids';
 import { runCompanyCheck } from '@/modules/company-discovery';
 import { reconcileSources, runSourceSync } from '@/modules/discovery';
+import { intelligenceService } from '@/modules/intelligence';
 import { z } from 'zod';
 
 const workerId = `worker_${generateId().slice(0, 8)}`;
@@ -43,6 +44,28 @@ async function startWorker() {
       logger.info({ sourceId: payload.sourceId }, '[Worker] Running source sync');
       const res = await runSourceSync(payload.sourceId);
       logger.info(res, '[Worker] Source sync finished');
+    }
+  );
+
+  // Register intel.analyze job handler (Milestone 6)
+  await registerHandler(
+    'intel.analyze',
+    z.object({ jobId: z.string().uuid(), force: z.boolean().optional() }),
+    async (payload) => {
+      logger.info({ jobId: payload.jobId }, '[Worker] Running job intelligence analysis');
+      const res = await intelligenceService.analyzeJob(payload.jobId, { force: payload.force });
+      logger.info(res, '[Worker] Job intelligence analysis finished');
+    }
+  );
+
+  // Register ai.drain_pending job handler (Milestone 6 degraded recovery)
+  await registerHandler(
+    'ai.drain_pending',
+    z.object({ limit: z.number().int().optional() }),
+    async (payload) => {
+      logger.info('[Worker] Running AI pending jobs drain');
+      const res = await intelligenceService.drainPendingAIJobs(payload.limit ?? 20);
+      logger.info(res, '[Worker] AI pending jobs drain completed');
     }
   );
 
