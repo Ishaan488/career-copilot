@@ -1,0 +1,185 @@
+# 05 — System Architecture
+
+## 1. Style
+**Modular monolith**, single repo, single TypeScript package. Two runtime processes sharing code and DB:
+1. `web` — Next.js (App Router) serving UI + REST route handlers + SSE.
+2. `worker` — Node process running pg-boss workers + scheduler + browser automation. Chromium launched on demand.
+
+PostgreSQL is the only stateful dependency. Files on local disk under `data/` behind a `FileStorage` interface.
+
+```mermaid
+flowchart LR
+  UI[Browser UI] -->|REST/SSE| WEB[web: Next.js route handlers]
+  WEB --> SVC[Module services]
+  WORKER[worker: pg-boss consumers + scheduler] --> SVC
+  SVC --> DB[(PostgreSQL)]
+  SVC --> FS[(data/ files)]
+  WORKER --> PW[Playwright Chromium]
+  SVC --> AI[AIProvider: Gemini]
+  WORKER --> SRC[Source adapters: public APIs/feeds/IMAP]
+  WEB -.LISTEN/NOTIFY.-> DB
+```
+
+`web` and `worker` import the same module services. Web enqueues; worker executes anything slow (AI, fetch, browser).
+
+## 2. Layers inside every module
+```
+modules/<name>/
+  index.ts        # PUBLIC API (only thing others may import)
+  schemas.ts      # zod schemas + inferred types
+  domain/         # pure logic, no I/O (heavily unit-tested)
+  repo.ts         # DB access (Drizzle)
+  service.ts      # orchestrates domain + repo + other modules' public APIs
+  jobs.ts         # queue handler definitions (if any)
+  adapters/ | infra/   # I/O implementations (HTTP, browser, LLM)
+  __tests__/
+```
+
+## 3. Module dependency map (arrows = "may import")
+Lower layers never import higher ones. No cycles (enforced).
+
+```mermaid
+flowchart TD
+  subgraph L0[Layer 0 shared]
+    shared[shared: config logger errors clock ids db storage redact]
+  end
+  subgraph L1[Layer 1 foundation]
+    queue[queue/workflow engine]
+    audit[audit+execlog]
+    settings[settings]
+    notify[notification]
+  end
+  subgraph L2[Layer 2 data owners]
+    profile[profile + preferences + autonomy]
+    discovery[discovery]
+    companies[companies]
+  end
+  subgraph L3[Layer 3 reasoning]
+    ai[ai provider]
+    policy[policy engine]
+    intel[intelligence]
+    resume[resume]
+  end
+  subgraph L4[Layer 4 action]
+    review[human-review]
+    apply[application]
+    browser[browser automation]
+    tracking[tracking]
+  end
+  subgraph L5[Layer 5 interface]
+    api[api route handlers]
+    ui[ui]
+  end
+  L0 --> L1 --> L2 --> L3 --> L4 --> L5
+```
+
+Explicit allowed imports:
+| Module | May import (public APIs) |
+|--------|--------------------------|
+| shared | — |
+| settings, audit, queue | shared |
+| notification | shared, settings, queue, audit |
+| profile | shared, audit, settings |
+| companies | shared, audit |
+| discovery | shared, queue, audit, companies, profile(prefs read), policy(prefilter) |
+| ai | shared, settings, audit (no domain knowledge of jobs) |
+| policy | shared, settings (**no ai, no discovery**) |
+| intelligence | shared, ai, profile, companies, discovery(read), policy, audit |
+| resume | shared, ai, profile, intelligence(read), audit |
+| human-review | shared, queue, notification, audit |
+| browser | shared, audit (no business modules; generic automation primitives + portal drivers receive plain data) |
+| application | shared, queue, profile, resume, intelligence, policy, human-review, browser, notification, audit, discovery(read) |
+| tracking | shared, application(read/transition API), notification, audit |
+| api | any module public API |
+| ui | only `/api` over HTTP (no module imports except shared types/zod schemas) |
+
+Circular needs (e.g. review needs to resume application workflow) are solved with **events via the queue**: review enqueues `workflow.resume` with `{workflowId}`; the `application` module registers the handler. Review never imports application.
+
+## 4. Technology stack (final; additions require ADR)
+| Concern | Choice | Notes |
+|---------|--------|-------|
+| Language | TypeScript 5.x strict | |
+| Web | Next.js 15 App Router, React 19 | UI + route handlers |
+| Styling/UI | Tailwind CSS 4 + shadcn/ui (Radix) + lucide-react | restrained design |
+| Data fetching UI | TanStack Query | + SSE invalidation |
+| Forms | react-hook-form + zod resolver | |
+| DB | PostgreSQL ≥15 (dev: 18 or 17 docker) | |
+| ORM/migrations | Drizzle ORM + drizzle-kit, `pg` driver | SQL-close, simple migrations (ADR-003) |
+| Queue | pg-boss | (ADR-004) |
+| Validation | zod | |
+| Logging | pino | |
+| AI | `@google/genai` behind `AIProvider` | |
+| Browser | `playwright` (chromium only) | |
+| HTML parsing | `cheerio` | job pages/feeds |
+| Text extraction | `pdf-parse`, `mammoth` (docx) | resume import |
+| DOCX gen | `docx` | |
+| PDF gen | Playwright `page.pdf()` | no extra dep |
+| IMAP | `imapflow` + `mailparser` | read-only |
+| SMTP | `nodemailer` | optional |
+| Telegram | plain `fetch` to Bot API | no lib |
+| Password hashing | `argon2` (or node `scrypt` if native build fails) | |
+| Tests | vitest, @testing-library/react, playwright test, `testcontainers` NOT used — tests use a dedicated local DB `career_copilot_test` | |
+| Lint/format | eslint, prettier, dependency-cruiser | |
+| Runner | `tsx` for worker/scripts | |
+| Domain parsing | `tldts` | registrable-domain (eTLD+1) parsing for company/domain matching |
+| HTML sanitizing | `sanitize-html` | sanitize scraped job HTML before storage/render |
+| Misc | `concurrently`, `date-fns-tz` | dev:all runner; timezone formatting |
+
+## 5. Exact initial folder structure
+```
+career-copilot/
+├─ docs/                          # these documents
+├─ drizzle/                       # generated SQL migrations (committed)
+├─ data/                          # gitignored: files, resumes, screenshots, backups
+├─ scripts/
+│  ├─ db-reset-test.ts
+│  ├─ backup.ts
+│  └─ verify-env.ts
+├─ fixtures/                      # CLEARLY LABELED test fixtures only
+│  ├─ ats-site/                   # local fake ATS (express/static) for browser tests
+│  ├─ jobs/                       # sample payloads from real ATS APIs (saved responses)
+│  └─ README.md                   # "fixtures are for tests; never loaded in prod"
+├─ src/
+│  ├─ app/                        # Next.js App Router
+│  │  ├─ (app)/                   # authenticated shell
+│  │  │  ├─ dashboard/ jobs/ jobs/[id]/ companies/[id]/ recommended/ saved/
+│  │  │  ├─ applications/ applications/[id]/ review/ review/[id]/ tracker/
+│  │  │  ├─ resumes/ profile/ preferences/ automation/ sources/
+│  │  │  ├─ notifications/ activity/ settings/ onboarding/
+│  │  ├─ login/
+│  │  └─ api/                     # route handlers (thin: parse→service→respond)
+│  ├─ components/                 # ui primitives + feature components
+│  ├─ modules/
+│  │  ├─ profile/  ├─ discovery/  ├─ companies/  ├─ ai/  ├─ policy/
+│  │  ├─ intelligence/  ├─ resume/  ├─ human-review/  ├─ application/
+│  │  ├─ browser/  ├─ tracking/  ├─ notification/  ├─ queue/  ├─ audit/  ├─ settings/
+│  ├─ shared/                     # config, logger, errors, clock, ids, db, storage, redact, http
+│  ├─ db/
+│  │  ├─ schema/                  # one file per module group: profile.ts discovery.ts ...
+│  │  └─ index.ts
+│  └─ worker/
+│     ├─ index.ts                 # boots pg-boss, registers handlers, scheduler, heartbeat
+│     └─ registry.ts              # imports each module's jobs.ts
+├─ tests/
+│  ├─ e2e/                        # playwright test
+│  ├─ integration/
+│  └─ failure/                    # failure-injection
+├─ .env.example
+├─ docker-compose.yml             # optional db only
+├─ drizzle.config.ts  vitest.config.ts  playwright.config.ts
+├─ eslint.config.mjs  .dependency-cruiser.cjs  tsconfig.json
+└─ package.json
+```
+npm scripts: `dev` (web), `dev:worker`, `dev:all`, `build`, `start`, `typecheck`, `lint`, `check:deps`, `test`, `test:int`, `test:e2e`, `test:failure`, `db:generate`, `db:migrate`, `db:reset:test`, `verify:env`.
+
+## 6. Key data flows
+**Discovery:** scheduler → `discovery.sync{sourceId}` → adapter.fetch → snapshots → normalize → dedupe → `jobs` (+events) → pre-filter policy → enqueue `intel.analyze{jobId}`.
+**Intelligence:** analyze(JD) → `job_analyses` → `company.research{companyId}` (if stale) → `comp.research` → `intel.evaluate{jobId}` (pure eligibility/score/risk/recommendation) → `policy.evaluate` → status/shortlist/notify.
+**Application:** shortlist → `application.create` → workflow runner steps (doc 10 §4) ↔ HITL pauses → submit gate → verify → tracking.
+**Monitoring:** scheduler → `tracking.poll_email` → classify → suggestions/events → notifications.
+
+## 7. Failure domains
+DB down → web returns 503 health, worker pg-boss retries connection; no data loss. Worker down → UI banner; queued jobs wait. AI down → tasks retry/backoff, jobs stay `under_analysis`; nothing proceeds on unvalidated output. Browser crash → step failure, workflow retried from last checkpoint (never from submit).
+
+## 8. Real-time
+SSE endpoint streams `{type, entity, id}` events fed by Postgres `LISTEN/NOTIFY` channel `app_events`. Clients invalidate TanStack queries. SSE is hint-only; correctness never depends on it.
