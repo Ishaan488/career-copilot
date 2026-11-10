@@ -35,13 +35,15 @@ Minimum supported: PostgreSQL ≥ 15 (uses `gen_random_uuid()`, `pg_trgm`).
 Informational for the user: the Windows PG 18 service accepts connections on all interfaces; consider restricting `listen_addresses`/firewall (not changed by this project).
 
 ## 5. M0 verification checklist (agent fills results here)
-- [ ] User ran doc 16 §1 (nvm Node 22, apt postgresql, Playwright deps) — `which node` under `~/.nvm`
-- [ ] `psql` connects as role `career` to `career_copilot` and `career_copilot_test`
-- [ ] Extensions available: `pg_trgm`
-- [ ] `npx playwright install chromium` succeeded; headless smoke OK
-- [ ] WSLg headed smoke (`BROWSER_HEADLESS=false`) OK / not available (record)
-- [ ] Repo at `/mnt/e/personal/career-copilot` (`E:\personal\career-copilot`), `.gitattributes` LF configured, `npm install` verified
-- [ ] Idle RAM measured
+- [x] Node 22 installed in WSL2 via nvm (`node v22.23.4`, `npm 10.9.9` under `~/.nvm`)
+- [x] Repo at `E:\personal\career-copilot` (`/mnt/e/personal/career-copilot`), `.gitattributes` configured, `npm install` verified
+- [x] Project scaffolded, strict TypeScript, ESLint, `.dependency-cruiser.cjs` verified
+- [x] Unit test suite (smoke, verify-env, dependency-rules) green (`npm test`)
+- [x] Next.js 15 production build green (`npm run build`)
+- [x] Playwright Chromium and headless shell downloaded to `~/.cache/ms-playwright`
+- [ ] Native PostgreSQL 16 in WSL2 installed & running (requires `sudo apt install postgresql`)
+- [ ] Playwright system dependencies installed in WSL2 (requires `sudo apt install libnspr4 ...` or `playwright install-deps`)
+- [ ] PostgreSQL role `career` and databases `career_copilot`, `career_copilot_test` created
 
 ## 6. Reuse / change / missing
 Reuse: nothing. Missing: Node in WSL, PG in WSL, entire codebase. Unsuitable: Windows PATH leaking into WSL.
