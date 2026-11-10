@@ -43,6 +43,13 @@
       "when": 1794339997889,
       "tag": "0005_clever_tomorrow_man",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794344037298,
+      "tag": "0006_open_wolf_cub",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { getQueue, startHeartbeat, closeQueue, registerHandler } from '@/modules/queue';
+import { getQueue, startHeartbeat, closeQueue, registerHandler, enqueue } from '@/modules/queue';
 import { logger } from '@/shared/logger';
 import { closeDbPool } from '@/shared/db';
 import { generateId } from '@/shared/ids';
@@ -55,6 +55,33 @@ async function startWorker() {
       logger.info({ jobId: payload.jobId }, '[Worker] Running job intelligence analysis');
       const res = await intelligenceService.analyzeJob(payload.jobId, { force: payload.force });
       logger.info(res, '[Worker] Job intelligence analysis finished');
+
+      // Chain evaluation upon successful analysis (Milestone 7)
+      if (res.status === 'completed') {
+        try {
+          await enqueue(
+            'intel.evaluate',
+            { jobId: payload.jobId },
+            { singletonKey: `intel.evaluate.${payload.jobId}` }
+          );
+        } catch (enqueueErr) {
+          logger.warn(
+            { enqueueErr, jobId: payload.jobId },
+            '[Worker] Could not chain intel.evaluate'
+          );
+        }
+      }
+    }
+  );
+
+  // Register intel.evaluate job handler (Milestone 7)
+  await registerHandler(
+    'intel.evaluate',
+    z.object({ jobId: z.string().uuid(), force: z.boolean().optional() }),
+    async (payload) => {
+      logger.info({ jobId: payload.jobId }, '[Worker] Running job evaluation & recommendation');
+      const res = await intelligenceService.evaluateJob(payload.jobId, { force: payload.force });
+      logger.info(res, '[Worker] Job evaluation & recommendation finished');
     }
   );
 

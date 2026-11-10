@@ -3,6 +3,7 @@ import {
   uuid,
   text,
   integer,
+  numeric,
   boolean,
   timestamp,
   jsonb,
@@ -72,5 +73,57 @@ export const jobSkillRequirements = pgTable(
   (t) => [
     index('job_skill_requirements_analysis_id_idx').on(t.analysisId),
     index('job_skill_requirements_normalized_name_idx').on(t.normalizedName),
+  ]
+);
+
+// Job Evaluations: Comprehensive multi-criteria evaluation of a job posting against candidate profile
+export const jobEvaluations = pgTable(
+  'job_evaluations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => jobs.id, { onDelete: 'cascade' }),
+    analysisId: uuid('analysis_id')
+      .notNull()
+      .references(() => jobAnalyses.id, { onDelete: 'cascade' }),
+    profileRevisionId: text('profile_revision_id'),
+    weights: jsonb('weights').default(sql`'{}'::jsonb`).notNull(),
+    eligibility: text('eligibility').notNull(), // 'eligible' | 'ineligible' | 'unknown'
+    eligibilityRules: jsonb('eligibility_rules').default(sql`'[]'::jsonb`).notNull(),
+    suitabilityTotal: numeric('suitability_total', { precision: 5, scale: 2 }).notNull(),
+    breakdown: jsonb('breakdown').default(sql`'{}'::jsonb`).notNull(),
+    riskLevel: text('risk_level').default('low').notNull(), // 'low' | 'medium' | 'high' | 'unknown'
+    riskFactors: jsonb('risk_factors').default(sql`'[]'::jsonb`).notNull(),
+    compAssessment: jsonb('comp_assessment').default(sql`'{}'::jsonb`).notNull(),
+    companyAssessment: jsonb('company_assessment').default(sql`'{}'::jsonb`).notNull(),
+    recommendation: text('recommendation').notNull(), // 'strongly_recommended' | 'recommended' | 'consider' | 'low_priority' | 'not_eligible' | 'high_risk' | 'insufficient_information'
+    explanation: text('explanation').notNull(),
+    evidenceIds: jsonb('evidence_ids').default(sql`'[]'::jsonb`).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('job_evaluations_job_id_created_at_idx').on(t.jobId, t.createdAt),
+    index('job_evaluations_recommendation_idx').on(t.recommendation),
+  ]
+);
+
+// Recommendation History: Audit log of recommendation transitions for a job
+export const recommendationHistory = pgTable(
+  'recommendation_history',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => jobs.id, { onDelete: 'cascade' }),
+    evaluationId: uuid('evaluation_id')
+      .notNull()
+      .references(() => jobEvaluations.id, { onDelete: 'cascade' }),
+    recommendation: text('recommendation').notNull(),
+    changedFrom: text('changed_from'),
+    at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('recommendation_history_job_id_at_idx').on(t.jobId, t.at),
   ]
 );

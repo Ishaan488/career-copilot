@@ -1,2 +1,3 @@
-// Policy engine module public API
-export const POLICY_MODULE = 'policy';
+export * from './domain/rules';
+export * from './domain/engine';
+export * from './service';

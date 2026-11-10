@@ -21,7 +21,38 @@ import {
   Sparkles,
   AlertTriangle,
   Cpu,
+  Award,
+  HelpCircle,
+  CheckCircle2,
 } from 'lucide-react';
+
+interface JobEvaluationData {
+  id: string;
+  eligibility: 'eligible' | 'ineligible' | 'unknown';
+  eligibilityRules: Array<{
+    rule: string;
+    result: 'pass' | 'fail' | 'unknown';
+    mandatory: boolean;
+    quote?: string;
+    reason: string;
+  }>;
+  suitabilityTotal: string;
+  breakdown: Record<
+    string,
+    {
+      score: number;
+      weight: number;
+      matched: string[];
+      missing: string[];
+      notes: string;
+      isUnknownNeutral?: boolean;
+    }
+  >;
+  riskLevel: 'low' | 'medium' | 'high' | 'unknown';
+  riskFactors: Array<{ code: string; severity: 'low' | 'medium' | 'high'; detail: string }>;
+  recommendation: string;
+  explanation: string;
+}
 
 interface JobSkill {
   id: string;
@@ -72,6 +103,8 @@ interface JobItem {
   status: string;
   statusReason: string | null;
   possibleDuplicateOf: string | null;
+  score?: string | null;
+  recommendation?: string | null;
   company: {
     id: string;
     name: string;
@@ -129,6 +162,8 @@ export default function JobsPage() {
   const [showManualModal, setShowManualModal] = useState(false);
   const [analysis, setAnalysis] = useState<JobAnalysisData | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [evaluation, setEvaluation] = useState<JobEvaluationData | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
   const [selectedSkillQuote, setSelectedSkillQuote] = useState<{ name: string; quote: string | null } | null>(null);
 
   // Import modal state
@@ -175,6 +210,7 @@ export default function JobsPage() {
     if (!selectedJobId) {
       setJobDetail(null);
       setAnalysis(null);
+      setEvaluation(null);
       setSelectedSkillQuote(null);
       return;
     }
@@ -190,6 +226,11 @@ export default function JobsPage() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setAnalysis(data))
       .catch(() => setAnalysis(null));
+
+    fetch(`/api/jobs/${selectedJobId}/evaluation`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setEvaluation(data))
+      .catch(() => setEvaluation(null));
   }, [selectedJobId]);
 
   const handleAnalyzeJob = async (force = false) => {
@@ -218,6 +259,94 @@ export default function JobsPage() {
       console.error('Failed to analyze job', err);
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleEvaluateJob = async () => {
+    if (!selectedJobId) return;
+    setEvaluating(true);
+    try {
+      const res = await fetch(`/api/jobs/${selectedJobId}/evaluate`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const evalRes = await fetch(`/api/jobs/${selectedJobId}/evaluation`);
+        if (evalRes.ok) {
+          const evalData = await evalRes.json();
+          setEvaluation(evalData);
+        }
+        const jRes = await fetch(`/api/jobs/${selectedJobId}`);
+        if (jRes.ok) {
+          const jData = await jRes.json();
+          setJobDetail(jData);
+          setJobs((prev) =>
+            prev.map((j) =>
+              j.id === jData.id
+                ? {
+                    ...j,
+                    status: jData.status,
+                    score: jData.score,
+                    recommendation: jData.recommendation,
+                  }
+                : j
+            )
+          );
+        }
+      }
+    } catch (err) {
+      console.error('Failed to evaluate job', err);
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  const getRecommendationBadge = (rec: string | null | undefined) => {
+    if (!rec) return null;
+    switch (rec) {
+      case 'strongly_recommended':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+            <Sparkles className="w-3 h-3 text-emerald-600" /> Strongly Recommended
+          </span>
+        );
+      case 'recommended':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Recommended
+          </span>
+        );
+      case 'consider':
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+            Consider
+          </span>
+        );
+      case 'low_priority':
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+            Low Priority
+          </span>
+        );
+      case 'not_eligible':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+            <XCircle className="w-3 h-3 text-rose-500" /> Not Eligible
+          </span>
+        );
+      case 'high_risk':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 border border-red-300">
+            <AlertTriangle className="w-3 h-3 text-red-600" /> High Risk
+          </span>
+        );
+      case 'insufficient_information':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+            <HelpCircle className="w-3 h-3 text-amber-500" /> Needs Info
+          </span>
+        );
+      default:
+        return null;
     }
   };
 
@@ -492,6 +621,13 @@ export default function JobsPage() {
                     {job.title}
                   </h3>
                   {getStatusBadge(job.status)}
+                  {job.score && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 tabular-nums">
+                      <Award className="w-3 h-3 text-indigo-500" />
+                      {Number(job.score).toFixed(0)}%
+                    </span>
+                  )}
+                  {job.recommendation && getRecommendationBadge(job.recommendation)}
                   {job.seniority && (
                     <span className="px-2 py-0.5 text-xs bg-slate-100 text-slate-700 rounded-md capitalize">
                       {job.seniority}
@@ -586,6 +722,15 @@ export default function JobsPage() {
                     {analyzing ? 'Analyzing...' : analysis ? 'Re-analyze' : 'Analyze (AI)'}
                   </button>
 
+                  <button
+                    onClick={handleEvaluateJob}
+                    disabled={evaluating}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 active:scale-[0.98] transition-all shadow-sm"
+                  >
+                    <Award className={`w-3.5 h-3.5 ${evaluating ? 'animate-spin' : ''}`} />
+                    {evaluating ? 'Evaluating...' : evaluation ? 'Re-evaluate' : 'Evaluate Fit'}
+                  </button>
+
                   {jobDetail.status !== 'shortlisted' && (
                     <button
                       onClick={() => handleStatusTransition('shortlisted', 'Shortlisted by user')}
@@ -660,6 +805,205 @@ export default function JobsPage() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Fit Evaluation & Match Scorecard */}
+                  {evaluation ? (
+                    <div className="p-5 bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 border border-slate-200 rounded-2xl shadow-sm space-y-5">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1.5 bg-emerald-100 text-emerald-800 rounded-lg">
+                            <Award className="w-4 h-4" />
+                          </span>
+                          <div>
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-900">
+                              Fit Evaluation & Suitability
+                            </h4>
+                            <span className="text-[10px] text-slate-500">
+                              Multi-component evaluation against your candidate profile
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {getRecommendationBadge(evaluation.recommendation)}
+                        </div>
+                      </div>
+
+                      {/* Score meter & Explanation */}
+                      <div className="p-4 bg-slate-50/70 border border-slate-200/80 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-slate-600">Overall Match Score</span>
+                          <span className="text-xl font-bold text-slate-900 tabular-nums">
+                            {Number(evaluation.suitabilityTotal).toFixed(1)} <span className="text-xs font-normal text-slate-400">/ 100</span>
+                          </span>
+                        </div>
+                        <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ease-out ${
+                              Number(evaluation.suitabilityTotal) >= 85
+                                ? 'bg-emerald-500'
+                                : Number(evaluation.suitabilityTotal) >= 70
+                                ? 'bg-indigo-500'
+                                : 'bg-blue-500'
+                            }`}
+                            style={{ width: `${Math.min(100, Math.max(0, Number(evaluation.suitabilityTotal)))}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-slate-700 leading-relaxed">
+                          {evaluation.explanation}
+                        </p>
+                      </div>
+
+                      {/* Eligibility Requirements */}
+                      {evaluation.eligibilityRules && evaluation.eligibilityRules.length > 0 && (
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                            Eligibility Requirements ({evaluation.eligibility.toUpperCase()})
+                          </span>
+                          <div className="space-y-1.5">
+                            {evaluation.eligibilityRules.map((rule, idx) => (
+                              <div
+                                key={idx}
+                                className="p-2.5 bg-white border border-slate-200 rounded-lg text-xs flex items-start justify-between gap-3"
+                              >
+                                <div className="flex items-start gap-2">
+                                  {rule.result === 'pass' ? (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                  ) : rule.result === 'fail' ? (
+                                    <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                  ) : (
+                                    <HelpCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                  )}
+                                  <div>
+                                    <span className="font-medium text-slate-900 capitalize block">
+                                      {rule.rule.replace(/_/g, ' ')}
+                                      {rule.mandatory && (
+                                        <span className="ml-1.5 px-1 py-0.2 text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded uppercase">
+                                          Mandatory
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span className="text-slate-600 text-[11px]">{rule.reason}</span>
+                                    {rule.quote && (
+                                      <p className="mt-1 text-[10px] text-slate-500 italic bg-slate-50 p-1.5 rounded border border-slate-100">
+                                        &ldquo;{rule.quote}&rdquo;
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <span
+                                  className={`px-2 py-0.5 text-[10px] font-semibold rounded-full capitalize shrink-0 ${
+                                    rule.result === 'pass'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : rule.result === 'fail'
+                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  }`}
+                                >
+                                  {rule.result}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Suitability Breakdown Components */}
+                      {evaluation.breakdown && (
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                            Scoring Breakdown
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            {Object.entries(evaluation.breakdown).map(([key, comp]) => (
+                              <div key={key} className="p-3 bg-white border border-slate-200 rounded-xl space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-semibold text-slate-800 capitalize">
+                                    {key.replace(/([A-Z])/g, ' $1')} ({comp.weight}%)
+                                  </span>
+                                  <span className="font-bold text-slate-900 tabular-nums">
+                                    {comp.score}/100
+                                  </span>
+                                </div>
+                                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-indigo-500 rounded-full"
+                                    style={{ width: `${comp.score}%` }}
+                                  />
+                                </div>
+                                {comp.notes && (
+                                  <p className="text-[11px] text-slate-500 line-clamp-2">{comp.notes}</p>
+                                )}
+                                {comp.matched && comp.matched.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 pt-1">
+                                    {comp.matched.slice(0, 4).map((m, i) => (
+                                      <span
+                                        key={i}
+                                        className="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 text-[10px] rounded border border-emerald-200"
+                                      >
+                                        ✓ {m}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {comp.missing && comp.missing.length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {comp.missing.slice(0, 3).map((m, i) => (
+                                      <span
+                                        key={i}
+                                        className="px-1.5 py-0.2 bg-rose-50 text-rose-700 text-[10px] rounded border border-rose-200"
+                                      >
+                                        ✗ {m}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Risk Factors */}
+                      {evaluation.riskFactors && evaluation.riskFactors.length > 0 && (
+                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                              Risk Factors Detected ({evaluation.riskFactors.length})
+                            </span>
+                            <span className="px-2 py-0.5 text-[10px] font-semibold rounded capitalize bg-slate-200 text-slate-700">
+                              {evaluation.riskLevel} Risk
+                            </span>
+                          </div>
+                          <div className="space-y-1">
+                            {evaluation.riskFactors.map((f, i) => (
+                              <div key={i} className="text-[11px] text-slate-600 flex items-start gap-1.5">
+                                <span className="text-amber-500">•</span>
+                                <span>{f.detail}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-emerald-50/40 border border-emerald-200/80 border-dashed rounded-xl flex items-center justify-between gap-4 text-xs">
+                      <div>
+                        <span className="font-semibold text-slate-800 block">Evaluate Fit & Recommendations</span>
+                        <span className="text-slate-500 text-[11px]">
+                          Calculate multi-criteria match score against your profile & preferences.
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleEvaluateJob}
+                        disabled={evaluating}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-medium rounded-lg transition-all shadow-sm shrink-0 inline-flex items-center gap-1.5"
+                      >
+                        <Award className={`w-3.5 h-3.5 ${evaluating ? 'animate-spin' : ''}`} />
+                        {evaluating ? 'Evaluating...' : 'Evaluate Fit'}
+                      </button>
+                    </div>
+                  )}
 
                   {/* AI Intelligence Analysis Section */}
                   {analysis ? (
