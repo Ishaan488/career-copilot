@@ -30,5 +30,11 @@ These decisions were given by the user on 2026-11-10 and **override** anything e
 - Windows has PostgreSQL 18 service running (`listen_addresses='*'`, port 5432). Reusing it from WSL is possible but not recommended (listens on all interfaces; cross-OS networking; state outside the dev environment).
 - Docker Desktop exists but is stopped → not used.
 
-## Open items created by these decisions
-See [18](18-risks-and-open-decisions.md): Q13 (repo location), Q14 (meaning of L2 submit), Q15 (IMAP monitoring), Q16 (company discovery inputs).
+## Follow-up decisions (2026-11-10)
+| Q | Decision | Consequence in the plan |
+|---|----------|-------------------------|
+| Q13 | **Develop everything in `E:\personal\career-copilot` only** (`/mnt/e/personal/career-copilot` inside WSL2). Do not move or clone to `~/dev`. | Single canonical working directory `E:\personal\career-copilot` (`/mnt/e/personal/career-copilot`). Configure Next.js/chokidar/vitest polling (`WATCHPACK_POLLING=true` in dev) where needed for `/mnt/e` DrvFs compatibility. |
+| Q14 | **Keep both M11 (manual handover) and M12 (per-application authorized automated submit), with M11 as the default.** | L2 default submission flow is M11 manual handover. M12 automated submit (per-application explicit authorization bound to `summary_hash`) is also implemented, disabled by default (`SUBMISSION_ENABLED=false` + settings toggle OFF). |
+
+## remaining open items
+See [18](18-risks-and-open-decisions.md): Q15 (IMAP monitoring opt-in), Q16 (company discovery inputs), Q17 (Telegram/SMTP credentials when ready), Q18 (Gemini models verified at M6).

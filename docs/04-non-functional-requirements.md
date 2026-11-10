@@ -28,5 +28,5 @@
 | NFR-DEG-1 | Resilience | With Gemini unavailable/quota exhausted/no key, all non-AI features (company & job discovery, import, profile, review, resume manager, application prep except AI suggestions, tracking, notifications) keep working; AI-dependent items show "pending AI" and retry | T-DEG |
 | NFR-RET-1 | Data | Retention defaults per doc 16 §9, configurable; retention job never deletes application records/resume PDFs | integration test |
 | NFR-TRC-1 | Traceability | Every AI output, user correction and automation action traceable (doc 08 §12) | integration test |
-| NFR-ENV-1 | Portability | Primary env WSL2 Ubuntu 24.04 + native PostgreSQL ≥15; no Docker required; no use of Windows-only paths/binaries; works on `/home` ext4 | M0 checklist |
+| NFR-ENV-1 | Portability | Primary env WSL2 Ubuntu 24.04 + native PostgreSQL ≥15; no Docker required; no use of Windows-only paths/binaries; developed directly in `E:\personal\career-copilot` (`/mnt/e/personal/career-copilot`) | M0 checklist |
 | NFR-RED-1 | Privacy | Logs and screenshots redacted where possible (input values masked in screenshots) | T-REDACT + browser test |

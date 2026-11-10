@@ -5,7 +5,7 @@
 1. `web` — Next.js (App Router) serving UI + REST route handlers + SSE.
 2. `worker` — Node process running pg-boss workers + scheduler + browser automation. Chromium launched on demand.
 
-PostgreSQL is the only stateful dependency (native PostgreSQL 16 inside WSL2, no Docker). Files on local disk under `data/` behind a `FileStorage` interface. Primary dev/runtime environment: **WSL2 Ubuntu 24.04**; working tree on ext4 (`~/dev/career-copilot`).
+PostgreSQL is the only stateful dependency (native PostgreSQL 16 inside WSL2, no Docker). Files on local disk under `data/` behind a `FileStorage` interface. Primary dev/runtime environment: **WSL2 Ubuntu 24.04**; canonical working directory is `E:\personal\career-copilot` (`/mnt/e/personal/career-copilot`).
 
 ```mermaid
 flowchart LR

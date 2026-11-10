@@ -1,12 +1,10 @@
 # 18 — Risks, Constraints, Assumptions & Open Decisions
 
-Resolved questions Q1–Q12 are recorded in [19-user-decisions](19-user-decisions.md).
+Resolved questions Q1–Q14 are recorded in [19-user-decisions](19-user-decisions.md).
 
 ## 1. Open questions for the user (consequential — do not assume)
 | ID | Question | Safe default until answered |
 |----|----------|-----------------------------|
-| Q13 | Repo location: WSL2 on `/mnt/e/...` is slow (node_modules, file watching unreliable). Move the canonical working tree to WSL ext4 (`~/dev/career-copilot`) and keep `E:\personal\career-copilot` as a git remote/backup? | Yes: M0 clones into `~/dev/career-copilot`; the E: copy stays as a backup remote (`receive.denyCurrentBranch=updateInstead` or a bare repo). Ask before moving anything. |
-| Q14 | At Level 2 ("preparation with my approval"), who clicks the final Submit? (a) the automation, after you explicitly authorize that specific application on the final summary screen; or (b) you, manually, in a browser window the system hands over with the form pre-filled. | Implement (b) first (M11, no submit code). Implement (a) in M12 behind `SUBMISSION_ENABLED=false` (env) AND a settings toggle; per-application authorization only; no standing/auto policy. |
 | Q15 | Should the system read your mailbox (IMAP, read-only) to detect confirmation/interview/rejection emails? | Disabled. Notifications still work (Telegram/SMTP send only). |
 | Q16 | Company discovery inputs you want: manual add (name/domain/URL), CSV/paste import, auto-registration from imported job URLs and email alerts, slug-probing of public ATS APIs by company name? | All enabled except email alerts (needs Q15/IMAP). Probe results stay `partially_verified` until you confirm identity. |
 | Q17 | Telegram chat id and SMTP details when you are ready (env only). | Channels disabled until configured. |
@@ -43,7 +41,7 @@ Resolved questions Q1–Q12 are recorded in [19-user-decisions](19-user-decision
 | R10 | Local web exposure | Low | High | loopback bind, Origin/Host checks, SameSite=Strict |
 | R11 | Misleading legitimacy conclusion | Med | High | checklist + evidence + wording rules |
 | R12 | Gemini model/limit changes | Med | Low | models in settings; verify at M6 |
-| R13 | WSL2 /mnt/e slowness or file-lock issues | High if used | Med | work on ext4 (Q13) |
+| R13 | WSL2 `/mnt/e/personal/career-copilot` DrvFs file-watcher/install quirks | Med | Low | Enable `WATCHPACK_POLLING=true` in dev scripts, `core.autocrlf=false` / `.gitattributes` `* text=auto eol=lf`, and avoid chmod-dependent runtime assertions on `/mnt/e` (store chmod-sensitive runtime files or check metadata via app layer) |
 | R14 | Windows PostgreSQL (`listen_addresses='*'`) exposed on LAN | Existing | Med | Not used by this project; recommend user restrict it (informational) |
 | R15 | Company slug probing hits wrong company | Med | Med | confidence + user confirmation before monitoring/applying |
 

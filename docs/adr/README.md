@@ -60,7 +60,7 @@ Context: user uploads own PDF and forbids generation/rewriting/tailoring/modific
 Decision: `autonomy_level` ∈ {1,2}. L2 submission: manual handover (default) or per-application authorized automated submit gated by env `SUBMISSION_ENABLED` + settings toggle. Standing/auto-submit policy not implemented; DB keeps no `auto_submit` column in v1. Consequences: smaller attack surface; policy engine retains `submission` scope for per-app checks only.
 
 ## ADR-019 WSL2 Ubuntu primary; native PostgreSQL 16 in WSL; no Docker
-Context: audit (doc 01): Ubuntu-D 24.04 with systemd, no Node/PG in WSL; Windows PG18 listens on `*`; Docker stopped. Decision: nvm Node 22 and apt PostgreSQL 16 inside WSL; working tree on ext4; Playwright Chromium in WSL (WSLg for headed handover, verified at M0). Windows PG not reused. Consequences: Windows-native support later; WSL idle shutdown requires keep-alive/auto-start documented in doc 16 §6.
+Context: audit (doc 01): Ubuntu-D 24.04 with systemd, no Node/PG in WSL; Windows PG18 listens on `*`; Docker stopped. Decision: nvm Node 22 and apt PostgreSQL 16 inside WSL; single canonical working directory at `E:\personal\career-copilot` (`/mnt/e/personal/career-copilot` inside WSL2, with `WATCHPACK_POLLING=true` and `.gitattributes` LF rules); Playwright Chromium in WSL (WSLg for headed handover, verified at M0). Windows PG not reused. Consequences: Windows-native support later; WSL idle shutdown requires keep-alive/auto-start documented in doc 16 §6.
 
 ## ADR-020 Never fabricate: tri-state `unknown` everywhere
 Decision: optional data yields `unknown` (NULL/explicit enum), domain functions are tri-state, UI shows "Unknown". Flagged neutral scores are labeled.

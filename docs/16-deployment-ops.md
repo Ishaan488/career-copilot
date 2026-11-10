@@ -17,8 +17,12 @@ sudo apt install -y libnss3 libatk-bridge2.0-0 libxkbcommon0 libgbm1 libasound2t
 Agent MUST NOT run `sudo` commands itself without the user (needs password); it prints the exact commands and waits.
 To stop Windows PATH leaking: add to `/etc/wsl.conf` `[interop] appendWindowsPath=false` (optional, recommended) then `wsl --shutdown`.
 
-## 2. Repo location (Q13)
-Work on ext4: `~/dev/career-copilot`. `/mnt/e/...` is slow and breaks file watchers. `E:\personal\career-copilot` remains a git remote/backup (see doc 18 Q13). Never run `npm install` on `/mnt/e`.
+## 2. Repo location (Q13 resolved)
+Develop everything directly inside `E:\personal\career-copilot` (which is `/mnt/e/personal/career-copilot` inside WSL2). Do **not** move or clone the repo elsewhere.
+DrvFs (`/mnt/e`) notes:
+- Add `.gitattributes` (`* text=auto eol=lf`) so Windows and WSL2 Git never fight over line endings.
+- Set `WATCHPACK_POLLING=true` in the `dev` script so Next.js hot-reload works reliably on `/mnt/e`.
+- Because Windows DrvFs mounts may not persist POSIX `chmod 600` bits without `metadata` mount options, `verify:env` checks `.env` permissions when on native POSIX filesystems and logs an informational note when on `/mnt/e` DrvFs.
 
 ## 3. Database setup (native PostgreSQL 16 in WSL)
 ```bash
@@ -60,7 +64,7 @@ WSL2 forwards `localhost:3000` to Windows, so open `http://127.0.0.1:3000` in th
 Headed browser ("continue manually"): needs WSLg (Windows 11). Verify at M0 with `npx playwright open about:blank` (`BROWSER_HEADLESS=false`). If WSLg is unavailable the manual-handover feature is shown as unavailable (not faked); the user opens the portal URL in their own browser instead.
 
 ## 6. Auto-start & keep-alive (document exact commands at M14)
-WSL2 stops when idle. Options: (a) Windows Task Scheduler task at logon running `wsl -d Ubuntu-D -- bash -lc "cd ~/dev/career-copilot && npm run start:all"` (keeps WSL alive while the process runs); (b) systemd user service inside WSL started by (a). UI honesty: worker status pill + "Gap detected: machine/WSL offline from X to Y"; on restart, catch-up discovery runs if last run older than interval.
+WSL2 stops when idle. Options: (a) Windows Task Scheduler task at logon running `wsl -d Ubuntu-D -- bash -lc "cd /mnt/e/personal/career-copilot && npm run start:all"` (keeps WSL alive while the process runs); (b) systemd user service inside WSL started by (a). UI honesty: worker status pill + "Gap detected: machine/WSL offline from X to Y"; on restart, catch-up discovery runs if last run older than interval.
 
 ## 7. Backup & restore
 `npm run backup` → `data/backups/<ts>/{db.dump (pg_dump -Fc), files.tar.gz}` retain last 14. `npm run restore -- <path> --yes`. Scheduled daily via queue (`maintenance.backup`) when `pg_dump` exists. Resume PDFs are in `files.tar.gz`. Optionally copy backups to `/mnt/e/...` (Windows disk) via configured `BACKUP_MIRROR_DIR`.

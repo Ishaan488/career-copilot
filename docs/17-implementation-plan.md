@@ -12,7 +12,7 @@ Autonomy levels: **L1** discovery/evaluation (M3–M8) → **L2** preparation wi
 ## M0 — WSL2 environment & scaffold
 Read: 00, 01, 05, 15§1, 16. Build:
 - Verify/finish environment per doc 16 §1–3 (user runs sudo steps; agent prints exact commands and waits): nvm Node 22 in WSL (not Windows node), PostgreSQL 16 native, Playwright Chromium + deps, WSLg headed-browser check. Record results in doc 01 §5.
-- Resolve Q13 with user, then place working tree at `~/dev/career-copilot`.
+- Work directly in `E:\personal\career-copilot` (`/mnt/e/personal/career-copilot` in WSL2) per Q13. Add `.gitattributes` (`* text=auto eol=lf`) and `WATCHPACK_POLLING=true` in dev script.
 - `npm init`; deps from doc 05 §4 needed now; strict tsconfig; alias `@/`; folder skeleton (doc 05 §5) with empty `index.ts` per module (no fake logic); ESLint boundary rules + `.dependency-cruiser.cjs` from doc 05 §3; `.env.example`, `scripts/verify-env.ts`.
 Tests: trivial unit test; depcruise forbidden-import test; `verify:env` test.
 Done when: `npm run typecheck && lint && check:deps && test` green in WSL; blank shell served; `psql` connects to `career_copilot`.

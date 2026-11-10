@@ -3,8 +3,7 @@
 Audit date: 2026-11-10 (updated after user chose WSL2 as primary environment, Q10/Q11).
 
 ## 1. Repository
-- `E:\personal\career-copilot` — new repo, docs only. Sibling projects in `E:\personal` are unrelated; MUST NOT be modified or imported.
-- Q13 (open): move canonical working tree to WSL ext4 `~/dev/career-copilot`.
+- `E:\personal\career-copilot` (`/mnt/e/personal/career-copilot` in WSL2) — single canonical working tree (Q13 resolved: develop everything here only). Sibling projects in `E:\personal` are unrelated; MUST NOT be modified or imported.
 
 ## 2. Windows host
 | Item | Finding |
@@ -41,8 +40,8 @@ Informational for the user: the Windows PG 18 service accepts connections on all
 - [ ] Extensions available: `pg_trgm`
 - [ ] `npx playwright install chromium` succeeded; headless smoke OK
 - [ ] WSLg headed smoke (`BROWSER_HEADLESS=false`) OK / not available (record)
-- [ ] Repo at `~/dev/career-copilot`, `npm install` speed acceptable
+- [ ] Repo at `/mnt/e/personal/career-copilot` (`E:\personal\career-copilot`), `.gitattributes` LF configured, `npm install` verified
 - [ ] Idle RAM measured
 
 ## 6. Reuse / change / missing
-Reuse: nothing. Missing: Node in WSL, PG in WSL, entire codebase. Unsuitable: `/mnt/e` as a working directory; Windows PATH leaking into WSL.
+Reuse: nothing. Missing: Node in WSL, PG in WSL, entire codebase. Unsuitable: Windows PATH leaking into WSL.
