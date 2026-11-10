@@ -1184,6 +1184,7 @@ export async function proposeFromJobUrl(
  * Returns all active, monitored, confirmed ATS boards for sync.
  */
 export async function getBoardsForDiscovery(): Promise<{
+  careerPageId: string;
   companyId: string;
   companyName: string;
   atsType: string;
@@ -1194,6 +1195,7 @@ export async function getBoardsForDiscovery(): Promise<{
 
   const rows = await db
     .select({
+      careerPageId: companyCareerPages.id,
       companyId: companies.id,
       companyName: companies.name,
       atsType: companyCareerPages.atsType,

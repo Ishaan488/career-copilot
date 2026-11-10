@@ -29,6 +29,13 @@
       "when": 1794332328188,
       "tag": "0003_fresh_elektra",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794336761441,
+      "tag": "0004_cool_wallop",
+      "breakpoints": true
     }
   ]
 }

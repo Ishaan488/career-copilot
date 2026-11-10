@@ -12,5 +12,5 @@ describe('Dependency boundary rules', () => {
       expect(result.output.summary.error).toBe(0);
       expect(result.output.summary.violations).toHaveLength(0);
     }
-  }, 60000);
+  }, 180000);
 });

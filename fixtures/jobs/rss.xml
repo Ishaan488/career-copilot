@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Tech Careers RSS Feed</title>
+    <link>https://example.com/jobs</link>
+    <description>Latest technology job postings</description>
+    <item>
+      <title>Senior Backend Engineer (Go / Distributed Systems)</title>
+      <link>https://example.com/jobs/backend-engineer-101</link>
+      <guid>job-101-rss</guid>
+      <pubDate>Mon, 10 Nov 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>We are seeking a <strong>Senior Backend Engineer</strong> to design high-throughput microservices. Remote - India or Hybrid Bangalore.</p>]]></description>
+    </item>
+    <item>
+      <title>Full Stack Developer [REQ-8902]</title>
+      <link>https://example.com/jobs/fullstack-8902</link>
+      <guid>job-102-rss</guid>
+      <pubDate>Sun, 09 Nov 2026 09:30:00 GMT</pubDate>
+      <description><![CDATA[<p>Looking for a Full Stack Developer with React, TypeScript and Node.js experience. Compensation: ₹15–25 LPA.</p>]]></description>
+    </item>
+  </channel>
+</rss>
