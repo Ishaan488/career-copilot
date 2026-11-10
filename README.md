@@ -25,17 +25,16 @@ Career Copilot operates like a persistent personal operations assistant. It cont
 | **M1** | Shared foundation, pg-boss queue, scrypt auth, CSRF middleware, UI shell | ✅ Complete |
 | **M2** | Candidate profile, job preferences, autonomy policies, reusable answers | ✅ Complete |
 | **M3** | Resume manager: PDF upload, SHA-256 dedupe, versioning, preview | ✅ Complete |
-| **M4** | Company discovery, monitoring & career page detection (separate from jobs) | 🔄 Next |
-| **M5** | Job discovery engine (Greenhouse, Lever, Ashby adapters, deduplication) | 📋 Planned |
-| **M6** | Gemini AI provider integration, rate limiting & cache layer | 📋 Planned |
-| **M7** | Job description intelligence & deterministic eligibility engine | 📋 Planned |
-| **M8** | Company research & legitimacy assessment engine | 📋 Planned |
-| **M9** | Deterministic suitability scoring & recommendation engine | 📋 Planned |
-| **M10** | Browser automation & ATS form field extraction | 📋 Planned |
-| **M11** | Manual browser handover workflow (default submission mode) | 📋 Planned |
-| **M12** | Policy-controlled automated submission (explicit per-app authorization) | 📋 Planned |
-| **M13** | Application lifecycle tracking & email notification monitoring | 📋 Planned |
-| **M14** | System hardening, security audit, retention pruning & backup | 📋 Planned |
+| **M4** | Company discovery, monitoring & career page detection (separate from jobs) | ✅ Complete |
+| **M5** | Job discovery engine (Greenhouse, Lever, Ashby adapters, deduplication) | ✅ Complete |
+| **M6** | Gemini AI provider integration, rate limiting, cache layer & JD analysis | ✅ Complete |
+| **M7** | Evaluation: Eligibility engine, suitability scoring, policy guardrails & recommendations | ✅ Complete |
+| **M8** | Company research & legitimacy assessment engine | 🔄 Next |
+| **M9** | Browser automation & ATS form field extraction (Playwright) | 📋 Planned |
+| **M10** | Manual browser handover workflow (default submission mode) | 📋 Planned |
+| **M11** | Policy-controlled automated submission (explicit per-app authorization) | 📋 Planned |
+| **M12** | Application lifecycle tracking & email notification monitoring | 📋 Planned |
+| **M13** | System hardening, security audit, retention pruning & backup | 📋 Planned |
 
 ---
 
