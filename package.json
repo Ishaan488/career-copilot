@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@google/genai": "^3.0.0",
+    "@rollup/rollup-win32-x64-msvc": "^4.68.2",
     "cheerio": "^1.0.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

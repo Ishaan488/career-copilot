@@ -83,10 +83,20 @@ export interface SubmissionVerificationResult {
   evidence?: Record<string, unknown>;
 }
 
+declare const SubmitTokenBrand: unique symbol;
+
+export interface SubmitToken {
+  readonly [SubmitTokenBrand]?: true;
+  applicationId: string;
+  submissionId: string;
+  summaryHash: string;
+  issuedAt: number;
+}
+
 export interface PortalDriverCapabilities {
   extract: true;
   fill: boolean;
-  submit: boolean; // Always false in Milestone 10/11
+  submit: boolean; // true for supported drivers in M12; false for generic
   verify: boolean;
 }
 
@@ -101,6 +111,7 @@ export interface PortalDriver {
   readBack(page: Page, fields: ExtractedField[]): Promise<Record<string, unknown>>;
   uploadFile(page: Page, fieldKey: string, filePath: string): Promise<void>;
   findSubmitControl(page: Page): Promise<Locator | null>;
+  submit(page: Page, token: SubmitToken): Promise<{ submitted: boolean }>;
   verifySubmission(page: Page): Promise<SubmissionVerificationResult>;
 }
 

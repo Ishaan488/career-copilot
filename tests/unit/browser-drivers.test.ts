@@ -9,6 +9,8 @@ import {
   computeFieldKey,
   normalizeLabel,
   classifyFieldCategory,
+  createSubmitToken,
+  SubmitToken,
 } from '@/modules/browser';
 import { chromium, Browser } from 'playwright';
 
@@ -52,18 +54,11 @@ describe('Browser Module & Portal Drivers', () => {
       expect(driver.id).toBe('generic');
     });
 
-    it('enforces submit: false capability invariant on all drivers', () => {
-      const drivers = [
-        new GreenhouseDriver(),
-        new LeverDriver(),
-        new AshbyDriver(),
-        new GenericDriver(),
-      ];
-
-      for (const d of drivers) {
-        expect(d.capabilities.submit).toBe(false);
-        expect(d.capabilities.extract).toBe(true);
-      }
+    it('enforces submit capabilities per driver (M12)', () => {
+      expect(new GreenhouseDriver().capabilities.submit).toBe(true);
+      expect(new LeverDriver().capabilities.submit).toBe(true);
+      expect(new AshbyDriver().capabilities.submit).toBe(true);
+      expect(new GenericDriver().capabilities.submit).toBe(false);
     });
   });
 
@@ -244,6 +239,62 @@ describe('Browser Module & Portal Drivers', () => {
       expect(readBack[lastNameField.fieldKey]).toBe('Smith');
       expect(readBack[emailField.fieldKey]).toBe('alice.smith@example.com');
       expect(readBack[agreeTermsField.fieldKey]).toBe(true);
+
+      await page.close();
+    });
+  });
+
+  describe('Automated Submission & Token Guard (M12)', () => {
+    it('rejects submit execution without valid SubmitToken', async () => {
+      const page = await browser.newPage();
+      await page.goto(`${baseUrl}/greenhouse/job-123`);
+
+      const driver = new GreenhouseDriver();
+      await expect(driver.submit(page, null as unknown as SubmitToken)).rejects.toThrow();
+
+      await page.close();
+    });
+
+    it('rejects submit execution on driver with submit capability disabled (e.g. generic)', async () => {
+      const page = await browser.newPage();
+      await page.goto(`${baseUrl}/generic/job-123`);
+
+      const driver = new GenericDriver();
+      const token = createSubmitToken({
+        applicationId: 'app-test-1',
+        submissionId: 'sub-test-1',
+        summaryHash: 'hash-test-1',
+      });
+
+      await expect(driver.submit(page, token)).rejects.toThrow(/does not support automated submission/);
+
+      await page.close();
+    });
+
+    it('submits form on capable driver and verifies confirmation', async () => {
+      const page = await browser.newPage();
+      await page.goto(`${baseUrl}/greenhouse/job-123`);
+
+      // Disable client-side validation constraint so test submits smoothly to /confirmation
+      await page.evaluate(() => {
+        const form = document.querySelector('form');
+        if (form) form.noValidate = true;
+      });
+
+      const driver = new GreenhouseDriver();
+      const token = createSubmitToken({
+        applicationId: 'app-test-1',
+        submissionId: 'sub-test-1',
+        summaryHash: 'hash-test-1',
+      });
+
+      const [_navResult] = await Promise.all([
+        page.waitForNavigation({ waitUntil: 'load' }).catch(() => null),
+        driver.submit(page, token),
+      ]);
+
+      const verification = await driver.verifySubmission(page);
+      expect(verification.status).toBe('confirmed');
 
       await page.close();
     });

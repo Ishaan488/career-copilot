@@ -20,15 +20,15 @@ describe('T-DEG: Degraded Mode & Non-AI Functionality Isolation (Doc 11 §10, Us
   });
 
   it('reports no_key when GEMINI_API_KEY is not configured', async () => {
-    // Instantiate real Gemini provider without API key
-    const unconfiguredProvider = new GeminiProvider('');
-    const degradedService = new AIService(unconfiguredProvider);
-
     // Save and temporarily unset environment variable
     const originalKey = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;
 
     try {
+      // Instantiate real Gemini provider without API key
+      const unconfiguredProvider = new GeminiProvider('');
+      const degradedService = new AIService(unconfiguredProvider);
+
       const status = await degradedService.status();
       expect(status.status).toBe('no_key');
       expect(status.reason).toContain('GEMINI_API_KEY');

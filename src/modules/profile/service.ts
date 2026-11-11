@@ -1,6 +1,7 @@
 import { getDb } from '@/shared/db';
 import { AppError } from '@/shared/errors';
 import { recordAudit } from '@/modules/audit';
+import { setSetting } from '@/modules/settings';
 import {
   candidateProfiles,
   candidateEmails,
@@ -842,6 +843,10 @@ export async function updateAutonomyPolicy(
       details: { version: nextVersion, level: parsed.level, submissionMode: parsed.submissionMode },
     }),
   ]);
+
+  if (parsed.submissionMode) {
+    await setSetting('submission.enabled', parsed.submissionMode === 'automated_authorized');
+  }
 
   return updated;
 }

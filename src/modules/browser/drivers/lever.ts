@@ -4,6 +4,13 @@ import { BasePortalDriver } from './base';
 export class LeverDriver extends BasePortalDriver {
   readonly id = 'lever' as const;
 
+  override readonly capabilities = {
+    extract: true as const,
+    fill: true,
+    submit: true,
+    verify: true,
+  };
+
   matches(url: URL): boolean {
     const host = url.hostname.toLowerCase();
     if (host === 'jobs.lever.co') {

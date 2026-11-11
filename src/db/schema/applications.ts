@@ -162,3 +162,32 @@ export const applicationAuthorizations = pgTable(
     index('application_authorizations_app_summary_idx').on(t.applicationId, t.summaryHash),
   ]
 );
+
+// Application Submissions: Two-phase idempotency protocol for automated submissions (Doc 08 §70, Doc 10 §5)
+export const applicationSubmissions = pgTable(
+  'application_submissions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    attemptNo: integer('attempt_no').default(1).notNull(),
+    status: text('status').notNull(), // 'intent' | 'clicked' | 'verified' | 'unverified' | 'failed_before_click' | 'abandoned'
+    authorizationId: uuid('authorization_id')
+      .references(() => applicationAuthorizations.id, { onDelete: 'set null' }),
+    intentAt: timestamp('intent_at', { withTimezone: true }).defaultNow().notNull(),
+    clickedAt: timestamp('clicked_at', { withTimezone: true }),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    verificationEvidence: jsonb('verification_evidence'),
+    screenshotPath: text('screenshot_path'),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('application_submissions_app_idx').on(t.applicationId),
+    uniqueIndex('application_submissions_active_unique_idx')
+      .on(t.applicationId)
+      .where(sql`status IN ('intent', 'clicked', 'verified', 'unverified')`),
+  ]
+);

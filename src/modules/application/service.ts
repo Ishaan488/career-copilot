@@ -6,6 +6,8 @@ import {
   applicationFormFields,
   applicationFieldAnswers,
   applicationEvents,
+  applicationAuthorizations,
+  applicationSubmissions,
   workflowCheckpoints,
   jobs,
   companies,
@@ -14,11 +16,13 @@ import {
   humanReviewRequests,
   reusableApplicationAnswers,
 } from '@/db/schema';
-import { eq, and, desc, lte } from 'drizzle-orm';
+import { eq, and, desc, lte, sql } from 'drizzle-orm';
 import { AppError } from '@/shared/errors';
 import { logger } from '@/shared/logger';
 import { storage } from '@/shared/storage';
 import { enqueue } from '@/modules/queue';
+import { recordAudit } from '@/modules/audit';
+import { getSetting } from '@/modules/settings';
 import {
   humanReviewService,
   ReviewCategory,
@@ -27,6 +31,8 @@ import {
 } from '@/modules/human-review';
 import {
   browserService,
+  createSubmitToken,
+  BrowserError,
   FieldType,
   ExtractedFieldOption,
   SelectorStrategy,
@@ -36,8 +42,10 @@ import {
 } from '@/modules/profile';
 import {
   getResumeVersion,
+  getResumeFileBuffer,
   recordResumeAttachment,
 } from '@/modules/resume';
+import { checkSubmissionAuthorization } from './domain/authorization';
 import {
   StepContext,
   StepResult,
@@ -634,6 +642,52 @@ export class ApplicationService {
           break;
         }
 
+        case 'submit': {
+          const subResult = await this.submitApprovedApplication(app.id);
+          if (subResult.verification.status === 'confirmed' || subResult.verification.status === 'already_applied') {
+            result = {
+              type: 'next',
+              nextStep: 'finalize',
+              stateUpdates: { submissionSource: 'automated_verified' },
+            };
+          } else {
+            result = {
+              type: 'pause',
+              reason: 'review',
+              message: 'Automated submission completed but confirmation could not be verified in portal.',
+              stateUpdates: {
+                submissionStatus: 'unverified',
+                submissionId: subResult.submissionId,
+              },
+            };
+          }
+          break;
+        }
+
+        case 'verify_submission': {
+          const [sub] = await db
+            .select()
+            .from(applicationSubmissions)
+            .where(eq(applicationSubmissions.applicationId, app.id))
+            .orderBy(desc(applicationSubmissions.createdAt))
+            .limit(1);
+
+          if (sub && sub.status === 'verified') {
+            result = {
+              type: 'next',
+              nextStep: 'finalize',
+              stateUpdates: { submissionSource: 'automated_verified' },
+            };
+          } else {
+            result = {
+              type: 'pause',
+              reason: 'review',
+              message: 'Submission verification pending or uncertain.',
+            };
+          }
+          break;
+        }
+
         case 'finalize': {
           await db
             .update(applications)
@@ -962,12 +1016,90 @@ export class ApplicationService {
           )
         );
 
+      const nextStep = cp.step === 'submit' ? 'verify_submission' : cp.step;
       await enqueue(
         'application.run_step',
-        { workflowId: cp.workflowId, step: cp.step, recovered: true },
-        { singletonKey: `wf:${cp.workflowId}:${cp.step}:${newVersion}` }
+        { workflowId: cp.workflowId, step: nextStep, recovered: true },
+        { singletonKey: `wf:${cp.workflowId}:${nextStep}:${newVersion}` }
       );
       recovered += 1;
+    }
+
+    // Also recover any stale clicked submissions (verify-only, never click twice) (Doc 10 §5, §9)
+    try {
+      const staleSubmissions = await db
+        .select()
+        .from(applicationSubmissions)
+        .where(
+          and(
+            eq(applicationSubmissions.status, 'clicked'),
+            lte(applicationSubmissions.clickedAt, staleThreshold)
+          )
+        )
+        .limit(10);
+
+      for (const sub of staleSubmissions) {
+        const [app] = await db
+          .select()
+          .from(applications)
+          .where(eq(applications.id, sub.applicationId))
+          .limit(1);
+
+        if (app && app.applicationUrl) {
+          try {
+            await browserService.withPage(
+              app.applicationUrl,
+              { workflowId: app.workflowId || crypto.randomUUID(), applicationId: app.id },
+              async (page, driver) => {
+                const verification = await driver.verifySubmission(page);
+                if (verification.status === 'confirmed' || verification.status === 'already_applied') {
+                  await db
+                    .update(applicationSubmissions)
+                    .set({
+                      status: 'verified',
+                      verifiedAt: new Date(),
+                      verificationEvidence: verification.evidence || {},
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(applicationSubmissions.id, sub.id));
+
+                  await db
+                    .update(applications)
+                    .set({
+                      status: 'submitted',
+                      submissionSource: 'automated_verified',
+                      appliedAt: new Date(),
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(applications.id, app.id));
+                } else {
+                  await db
+                    .update(applicationSubmissions)
+                    .set({
+                      status: 'unverified',
+                      error: 'Stale clicked submission verification uncertain',
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(applicationSubmissions.id, sub.id));
+
+                  await db
+                    .update(applications)
+                    .set({
+                      status: 'submission_unverified',
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(applications.id, app.id));
+                }
+              }
+            );
+          } catch {
+            // Keep going on recovery error
+          }
+        }
+        recovered += 1;
+      }
+    } catch {
+      // Table may not have rows or check failed
     }
 
     if (recovered > 0) {
@@ -1012,12 +1144,53 @@ export class ApplicationService {
       .leftJoin(applicationFieldAnswers, eq(applicationFormFields.id, applicationFieldAnswers.fieldId))
       .where(eq(applicationFormFields.applicationId, id));
 
+    const [latestAuth] = await db
+      .select()
+      .from(applicationAuthorizations)
+      .where(eq(applicationAuthorizations.applicationId, id))
+      .orderBy(desc(applicationAuthorizations.createdAt))
+      .limit(1);
+
+    const [latestSub] = await db
+      .select()
+      .from(applicationSubmissions)
+      .where(eq(applicationSubmissions.applicationId, id))
+      .orderBy(desc(applicationSubmissions.createdAt))
+      .limit(1);
+
+    let resumeSha256 = 'no_resume';
+    if (row.app.resumeVersionId) {
+      try {
+        const version = await getResumeVersion(row.app.resumeVersionId);
+        resumeSha256 = version.sha256;
+      } catch {
+        // ignore
+      }
+    }
+
+    const validAnswers = fieldsWithAnswers
+      .filter((fa) => fa.answer !== null)
+      .map((fa) => ({
+        fieldKey: fa.field.fieldKey,
+        answer: fa.answer!.answer,
+        decision: fa.answer!.decision,
+      }));
+
+    const summaryHash = computeSummaryHash(row.app.applicationUrl, resumeSha256, validAnswers);
+    const submissionSetting = await getSetting<boolean>('submission.enabled');
+    const submissionEnv = process.env.SUBMISSION_ENABLED === 'true';
+    const canAutomate = submissionEnv && !!submissionSetting && row.app.platform !== 'generic';
+
     return {
       ...row.app,
       jobTitle: row.jobTitle,
       companyName: row.companyName,
       tasks,
       fields: fieldsWithAnswers,
+      authorization: latestAuth || null,
+      latestSubmission: latestSub || null,
+      summaryHash,
+      canAutomate,
     };
   }
 
@@ -1143,6 +1316,691 @@ export class ApplicationService {
         updatedAt: new Date(),
       })
       .where(eq(applications.id, applicationId));
+  }
+
+  /**
+   * Explicitly authorizes automated submission for an application bound to a deterministic summary hash.
+   * Enforces 24-hour expiration window and invalidation upon any change (Doc 08 §71, Doc 10 §6, Doc 13 §8).
+   */
+  async authorizeSubmission(
+    applicationId: string,
+    params: { summaryHash: string; expiresHours?: number; notes?: string }
+  ) {
+    const db = getDb();
+
+    const [app] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+
+    if (!app) {
+      throw new AppError('NOT_FOUND', `Application '${applicationId}' not found.`);
+    }
+
+    if (app.status !== 'ready_to_submit') {
+      throw new AppError(
+        'VALIDATION',
+        `Application status must be 'ready_to_submit' to authorize submission (current: '${app.status}').`
+      );
+    }
+
+    // Verify summary hash
+    const answersWithFields = await db
+      .select({
+        answer: applicationFieldAnswers,
+        field: applicationFormFields,
+      })
+      .from(applicationFieldAnswers)
+      .innerJoin(applicationFormFields, eq(applicationFieldAnswers.fieldId, applicationFormFields.id))
+      .where(eq(applicationFormFields.applicationId, app.id));
+
+    let resumeSha256 = 'no_resume';
+    if (app.resumeVersionId) {
+      const version = await getResumeVersion(app.resumeVersionId);
+      resumeSha256 = version.sha256;
+    }
+
+    const currentHash = computeSummaryHash(
+      app.applicationUrl,
+      resumeSha256,
+      answersWithFields.map((af) => ({
+        fieldKey: af.field.fieldKey,
+        answer: af.answer.answer,
+        decision: af.answer.decision,
+      }))
+    );
+
+    if (currentHash !== params.summaryHash) {
+      throw new AppError(
+        'VALIDATION',
+        'Summary hash mismatch. Application content or answers have changed since summary was generated.'
+      );
+    }
+
+    // Revoke any existing active authorizations for this application
+    await db
+      .update(applicationAuthorizations)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(applicationAuthorizations.applicationId, app.id),
+          eq(applicationAuthorizations.kind, 'submission')
+        )
+      );
+
+    const expiresAt = new Date(Date.now() + (params.expiresHours || 24) * 3600 * 1000);
+
+    const [auth] = await db
+      .insert(applicationAuthorizations)
+      .values({
+        applicationId: app.id,
+        kind: 'submission',
+        scope: {
+          applicationId: app.id,
+          platform: app.platform,
+          applicationUrl: app.applicationUrl,
+        },
+        summaryHash: params.summaryHash,
+        summarySnapshot: {
+          answersCount: answersWithFields.length,
+          applicationUrl: app.applicationUrl,
+          resumeVersionId: app.resumeVersionId,
+          notes: params.notes || null,
+        },
+        grantedBy: 'user',
+        expiresAt,
+      })
+      .returning();
+
+    await recordAudit({
+      actor: 'user',
+      action: 'authorization.granted',
+      entityType: 'applications',
+      entityId: app.id,
+      details: {
+        authorizationId: auth?.id,
+        summaryHash: params.summaryHash,
+        expiresAt: expiresAt.toISOString(),
+      },
+    });
+
+    await db.insert(applicationEvents).values({
+      applicationId: app.id,
+      type: 'submission_authorized',
+      fromStatus: app.status,
+      toStatus: app.status,
+      actor: 'user',
+      details: {
+        authorizationId: auth?.id,
+        summaryHash: params.summaryHash,
+        expiresAt: expiresAt.toISOString(),
+      },
+    });
+
+    logger.info({ applicationId: app.id, authorizationId: auth?.id }, '[ApplicationService] Submission authorized by user');
+    return auth!;
+  }
+
+  /**
+   * Revokes an active submission authorization for an application.
+   */
+  async revokeSubmissionAuthorization(applicationId: string, reason?: string) {
+    const db = getDb();
+
+    const [app] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+
+    if (!app) {
+      throw new AppError('NOT_FOUND', `Application '${applicationId}' not found.`);
+    }
+
+    await db
+      .update(applicationAuthorizations)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(applicationAuthorizations.applicationId, app.id),
+          eq(applicationAuthorizations.kind, 'submission')
+        )
+      );
+
+    await recordAudit({
+      actor: 'user',
+      action: 'authorization.revoked',
+      entityType: 'applications',
+      entityId: app.id,
+      details: { reason: reason || 'User revoked submission authorization' },
+    });
+
+    await db.insert(applicationEvents).values({
+      applicationId: app.id,
+      type: 'authorization_revoked',
+      actor: 'user',
+      details: { reason },
+    });
+
+    return { revoked: true };
+  }
+
+  /**
+   * Retrieves the current active submission authorization for an application.
+   */
+  async getSubmissionAuthorization(applicationId: string) {
+    const db = getDb();
+    const [auth] = await db
+      .select()
+      .from(applicationAuthorizations)
+      .where(
+        and(
+          eq(applicationAuthorizations.applicationId, applicationId),
+          eq(applicationAuthorizations.kind, 'submission')
+        )
+      )
+      .orderBy(desc(applicationAuthorizations.grantedAt))
+      .limit(1);
+
+    return auth || null;
+  }
+
+  /**
+   * Submits an approved application using the strict two-phase idempotency protocol (Doc 10 §5, Doc 13 §8).
+   * Commits intent row first, updates clicked before submission, and validates evidence.
+   */
+  async submitApprovedApplication(applicationId: string) {
+    const db = getDb();
+
+    const [app] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+
+    if (!app) {
+      throw new AppError('NOT_FOUND', `Application '${applicationId}' not found.`);
+    }
+
+    // 1. Check duplicate active submitted application
+    const duplicateApp = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(
+        and(
+          eq(applications.dedupeKey, app.dedupeKey),
+          eq(applications.status, 'submitted')
+        )
+      )
+      .limit(1);
+
+    // 2. Load fields & answers
+    const answersWithFields = await db
+      .select({
+        answer: applicationFieldAnswers,
+        field: applicationFormFields,
+      })
+      .from(applicationFieldAnswers)
+      .innerJoin(applicationFormFields, eq(applicationFieldAnswers.fieldId, applicationFormFields.id))
+      .where(eq(applicationFormFields.applicationId, app.id));
+
+    // 3. Load resume version info
+    let storedSha256: string | null = null;
+    let expectedSha256: string | null = null;
+    let resumePath: string | undefined;
+    let resumeFileName: string | undefined;
+
+    if (app.resumeVersionId) {
+      const version = await getResumeVersion(app.resumeVersionId);
+      expectedSha256 = version.sha256;
+      const { version: verOnDisk } = await getResumeFileBuffer(app.resumeVersionId);
+      storedSha256 = verOnDisk.sha256;
+      resumePath = storage.getAbsolutePath(version.storedPath);
+      resumeFileName = version.originalFilename || 'resume.pdf';
+    }
+
+    // 4. Compute current summary hash
+    const currentSummaryHash = computeSummaryHash(
+      app.applicationUrl,
+      expectedSha256 || 'no_resume',
+      answersWithFields.map((af) => ({
+        fieldKey: af.field.fieldKey,
+        answer: af.answer.answer,
+        decision: af.answer.decision,
+      }))
+    );
+
+    // 5. Load active authorization
+    const [auth] = await db
+      .select()
+      .from(applicationAuthorizations)
+      .where(
+        and(
+          eq(applicationAuthorizations.applicationId, app.id),
+          eq(applicationAuthorizations.kind, 'submission')
+        )
+      )
+      .orderBy(desc(applicationAuthorizations.grantedAt))
+      .limit(1);
+
+    // 6. Check gates
+    const envSubmissionEnabled = process.env.SUBMISSION_ENABLED === 'true';
+    const settingsSubmissionEnabled = await getSetting<boolean>('submission.enabled');
+
+    // Check active submission
+    const [existingActiveSubmission] = await db
+      .select({ id: applicationSubmissions.id, status: applicationSubmissions.status })
+      .from(applicationSubmissions)
+      .where(
+        and(
+          eq(applicationSubmissions.applicationId, app.id),
+          sql`${applicationSubmissions.status} IN ('intent', 'clicked', 'verified', 'unverified')`
+        )
+      )
+      .limit(1);
+
+    const authCheck = checkSubmissionAuthorization({
+      applicationId: app.id,
+      status: app.status,
+      verifiedDomain: app.verifiedDomain,
+      currentSummaryHash,
+      envSubmissionEnabled,
+      settingsSubmissionEnabled,
+      activeSubmissionExists: !!existingActiveSubmission,
+      duplicateSubmittedAppExists: duplicateApp.length > 0 && duplicateApp[0]?.id !== app.id,
+      resume: app.resumeVersionId
+        ? { storedSha256, expectedSha256 }
+        : null,
+      authorization: auth
+        ? {
+            id: auth.id,
+            kind: auth.kind,
+            summaryHash: auth.summaryHash,
+            expiresAt: auth.expiresAt,
+            revokedAt: auth.revokedAt,
+          }
+        : null,
+      answers: answersWithFields.map((af) => ({
+        fieldKey: af.field.fieldKey,
+        category: af.field.category,
+        status: af.answer.status,
+        source: af.answer.source,
+        decision: af.answer.decision,
+      })),
+    });
+
+    if (!authCheck.ok) {
+      throw new AppError(
+        'FORBIDDEN',
+        `Automated submission rejected by security policy: ${authCheck.reasons.join('; ')}`,
+        { details: { reasons: authCheck.reasons } }
+      );
+    }
+
+    // 7. Phase 1: COMMIT INTENT ROW (Doc 10 §5, Doc 13 §8)
+    const [submission] = await db
+      .insert(applicationSubmissions)
+      .values({
+        applicationId: app.id,
+        status: 'intent',
+        authorizationId: auth!.id,
+        intentAt: new Date(),
+      })
+      .returning();
+
+    const token = createSubmitToken({
+      applicationId: app.id,
+      submissionId: submission!.id,
+      summaryHash: currentSummaryHash,
+    });
+
+    await db.insert(applicationEvents).values({
+      applicationId: app.id,
+      type: 'submission_intent',
+      actor: 'system',
+      details: {
+        submissionId: submission!.id,
+        authorizationId: auth!.id,
+        summaryHash: currentSummaryHash,
+      },
+    });
+
+    // 8. Phase 2: BROWSER EXECUTION WITH PRE-CLICK COMMIT
+    try {
+      const result = await browserService.withPage(
+        app.applicationUrl,
+        { workflowId: app.workflowId || crypto.randomUUID(), applicationId: app.id },
+        async (page, driver) => {
+          // Verify driver capabilities
+          if (!driver.capabilities.submit) {
+            throw new BrowserError(
+              'BLOCKED_BY_PORTAL',
+              `Driver '${driver.id}' does not support automated submission. Manual handover required.`,
+              { retryable: false }
+            );
+          }
+
+          // Refill form with approved answers and verified resume
+          const fillPlan = {
+            fields: answersWithFields.map((af) => ({
+              fieldKey: af.field.fieldKey,
+              value: af.answer.answer,
+              decision: af.answer.decision as 'answered' | 'declined' | 'left_blank',
+              type: af.field.type,
+            })),
+            resumeFilePath: resumePath,
+            resumeFileName: resumeFileName,
+          };
+
+          await driver.fill(page, fillPlan);
+
+          // COMMIT CLICKED STATUS BEFORE CLICKING SUBMIT (Doc 10 §5)
+          await db
+            .update(applicationSubmissions)
+            .set({
+              status: 'clicked',
+              clickedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(applicationSubmissions.id, submission!.id));
+
+          await db.insert(applicationEvents).values({
+            applicationId: app.id,
+            type: 'submission_clicked',
+            actor: 'system',
+            details: { submissionId: submission!.id },
+          });
+
+          // DISPATCH SUBMIT
+          await driver.submit(page, token);
+
+          // VERIFY SUBMISSION EVIDENCE
+          const verification = await driver.verifySubmission(page);
+          return { verification, pageUrl: page.url() };
+        }
+      );
+
+      const verification = result.verification;
+
+      if (verification.status === 'confirmed' || verification.status === 'already_applied') {
+        // SUCCESS
+        await db
+          .update(applicationSubmissions)
+          .set({
+            status: 'verified',
+            verifiedAt: new Date(),
+            verificationEvidence: verification.evidence || {},
+            updatedAt: new Date(),
+          })
+          .where(eq(applicationSubmissions.id, submission!.id));
+
+        await db
+          .update(applications)
+          .set({
+            status: 'submitted',
+            submissionSource: 'automated_verified',
+            appliedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(applications.id, app.id));
+
+        const [job] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, app.jobId)).limit(1);
+        if (job) {
+          await db.update(jobs).set({ status: 'applied', updatedAt: new Date() }).where(eq(jobs.id, job.id));
+        }
+
+        if (app.workflowId) {
+          await db
+            .update(workflowCheckpoints)
+            .set({ status: 'completed', updatedAt: new Date() })
+            .where(eq(workflowCheckpoints.workflowId, app.workflowId));
+        }
+
+        await recordAudit({
+          actor: 'system',
+          action: 'application.submitted_automated',
+          entityType: 'applications',
+          entityId: app.id,
+          details: {
+            submissionId: submission!.id,
+            verification,
+          },
+        });
+
+        await db.insert(applicationEvents).values({
+          applicationId: app.id,
+          type: 'submitted',
+          fromStatus: 'ready_to_submit',
+          toStatus: 'submitted',
+          actor: 'system',
+          details: {
+            submissionSource: 'automated_verified',
+            submissionId: submission!.id,
+            verification,
+          },
+        });
+
+        logger.info({ applicationId: app.id, submissionId: submission!.id }, '[ApplicationService] Application submitted and verified successfully');
+        return {
+          applicationId: app.id,
+          status: 'submitted',
+          submissionId: submission!.id,
+          verification,
+        };
+      } else {
+        // UNCERTAIN / NOT CONFIRMED
+        await db
+          .update(applicationSubmissions)
+          .set({
+            status: 'unverified',
+            error: 'Submission confirmation could not be verified in portal.',
+            verificationEvidence: verification.evidence || {},
+            updatedAt: new Date(),
+          })
+          .where(eq(applicationSubmissions.id, submission!.id));
+
+        await db
+          .update(applications)
+          .set({
+            status: 'submission_unverified',
+            updatedAt: new Date(),
+          })
+          .where(eq(applications.id, app.id));
+
+        if (app.workflowId) {
+          await db
+            .update(workflowCheckpoints)
+            .set({
+              status: 'paused',
+              step: 'verify_submission',
+              updatedAt: new Date(),
+            })
+            .where(eq(workflowCheckpoints.workflowId, app.workflowId));
+        }
+
+        await db.insert(applicationEvents).values({
+          applicationId: app.id,
+          type: 'submission_unverified',
+          fromStatus: 'ready_to_submit',
+          toStatus: 'submission_unverified',
+          actor: 'system',
+          details: {
+            submissionId: submission!.id,
+            verification,
+          },
+        });
+
+        logger.warn({ applicationId: app.id, submissionId: submission!.id }, '[ApplicationService] Submission unverified; manual resolution required');
+        return {
+          applicationId: app.id,
+          status: 'submission_unverified',
+          submissionId: submission!.id,
+          verification,
+        };
+      }
+    } catch (err: unknown) {
+      // Check if failure occurred before click
+      const [currentSub] = await db
+        .select({ status: applicationSubmissions.status })
+        .from(applicationSubmissions)
+        .where(eq(applicationSubmissions.id, submission!.id))
+        .limit(1);
+
+      if (currentSub?.status === 'intent') {
+        await db
+          .update(applicationSubmissions)
+          .set({
+            status: 'failed_before_click',
+            error: err instanceof Error ? err.message : String(err),
+            updatedAt: new Date(),
+          })
+          .where(eq(applicationSubmissions.id, submission!.id));
+      }
+
+      throw err;
+    }
+  }
+
+  /**
+   * Resolves an unverified automated submission (Doc 10 §5).
+   */
+  async resolveUnverifiedSubmission(
+    applicationId: string,
+    resolution: 'confirm_submitted' | 'retry_confirmed' | 'abandon',
+    notes?: string
+  ) {
+    const db = getDb();
+
+    const [app] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+
+    if (!app) {
+      throw new AppError('NOT_FOUND', `Application '${applicationId}' not found.`);
+    }
+
+    const [sub] = await db
+      .select()
+      .from(applicationSubmissions)
+      .where(
+        and(
+          eq(applicationSubmissions.applicationId, app.id),
+          eq(applicationSubmissions.status, 'unverified')
+        )
+      )
+      .orderBy(desc(applicationSubmissions.createdAt))
+      .limit(1);
+
+    if (!sub) {
+      throw new AppError('NOT_FOUND', `No unverified submission found for application '${applicationId}'.`);
+    }
+
+    if (resolution === 'confirm_submitted') {
+      await db
+        .update(applicationSubmissions)
+        .set({
+          status: 'verified',
+          verifiedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(applicationSubmissions.id, sub.id));
+
+      await db
+        .update(applications)
+        .set({
+          status: 'submitted',
+          submissionSource: 'automated_unverified_resolved',
+          appliedAt: new Date(),
+          notes: notes || app.notes,
+          updatedAt: new Date(),
+        })
+        .where(eq(applications.id, app.id));
+
+      const [job] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, app.jobId)).limit(1);
+      if (job) {
+        await db.update(jobs).set({ status: 'applied', updatedAt: new Date() }).where(eq(jobs.id, job.id));
+      }
+
+      if (app.workflowId) {
+        await db
+          .update(workflowCheckpoints)
+          .set({ status: 'completed', updatedAt: new Date() })
+          .where(eq(workflowCheckpoints.workflowId, app.workflowId));
+      }
+
+      await recordAudit({
+        actor: 'user',
+        action: 'application.unverified_resolved_confirmed',
+        entityType: 'applications',
+        entityId: app.id,
+        details: { submissionId: sub.id, notes },
+      });
+
+      return { applicationId: app.id, status: 'submitted', submissionSource: 'automated_unverified_resolved' };
+    } else if (resolution === 'retry_confirmed') {
+      await db
+        .update(applicationSubmissions)
+        .set({
+          status: 'abandoned',
+          error: notes || 'User chose to retry submission',
+          updatedAt: new Date(),
+        })
+        .where(eq(applicationSubmissions.id, sub.id));
+
+      await db
+        .update(applications)
+        .set({
+          status: 'ready_to_submit',
+          updatedAt: new Date(),
+        })
+        .where(eq(applications.id, app.id));
+
+      if (app.workflowId) {
+        await db
+          .update(workflowCheckpoints)
+          .set({
+            status: 'running',
+            step: 'await_submission_decision',
+            updatedAt: new Date(),
+          })
+          .where(eq(workflowCheckpoints.workflowId, app.workflowId));
+      }
+
+      return { applicationId: app.id, status: 'ready_to_submit' };
+    } else {
+      // abandon
+      await db
+        .update(applicationSubmissions)
+        .set({
+          status: 'abandoned',
+          error: notes || 'User abandoned unverified submission',
+          updatedAt: new Date(),
+        })
+        .where(eq(applicationSubmissions.id, sub.id));
+
+      await db
+        .update(applications)
+        .set({
+          status: 'withdrawn',
+          updatedAt: new Date(),
+        })
+        .where(eq(applications.id, app.id));
+
+      if (app.workflowId) {
+        await db
+          .update(workflowCheckpoints)
+          .set({
+            status: 'cancelled',
+            updatedAt: new Date(),
+          })
+          .where(eq(workflowCheckpoints.workflowId, app.workflowId));
+      }
+
+      return { applicationId: app.id, status: 'withdrawn' };
+    }
   }
 }
 

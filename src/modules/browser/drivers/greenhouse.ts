@@ -4,6 +4,13 @@ import { BasePortalDriver } from './base';
 export class GreenhouseDriver extends BasePortalDriver {
   readonly id = 'greenhouse' as const;
 
+  override readonly capabilities = {
+    extract: true as const,
+    fill: true,
+    submit: true,
+    verify: true,
+  };
+
   matches(url: URL): boolean {
     const host = url.hostname.toLowerCase();
     if (host === 'boards.greenhouse.io' || host === 'job-boards.greenhouse.io') {

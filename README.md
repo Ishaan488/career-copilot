@@ -33,8 +33,9 @@ Career Copilot operates like a persistent personal operations assistant. It cont
 | **M9** | Human-in-the-Loop (HITL) review center & checkpointed workflow engine | ✅ Complete |
 | **M10** | Browser automation & ATS form field extraction (Greenhouse, Lever, Ashby, Generic) | ✅ Complete |
 | **M11** | Application preparation, verified resume attachment & manual browser handover | ✅ Complete |
-| **M12** | Application lifecycle tracking & email/notification monitoring | 🔄 Next |
-| **M13** | System hardening, security audit, retention pruning & backup | 📋 Planned |
+| **M12** | Approved automated submission, two-phase idempotency & unverified resolution | ✅ Complete |
+| **M13** | Application lifecycle tracking & email/notification monitoring | 🔄 Next |
+| **M14** | System hardening, security audit, retention pruning & backup | 📋 Planned |
 
 ---
 

@@ -11,6 +11,7 @@ import {
   PortalDriverCapabilities,
   PrepareResult,
   SubmissionVerificationResult,
+  SubmitToken,
 } from '../types';
 import { isHoneypotElement } from '../honeypot';
 import {
@@ -470,6 +471,32 @@ export abstract class BasePortalDriver implements PortalDriver {
     }
 
     return null;
+  }
+
+  /**
+   * Executes the submission by clicking the submit control with a valid SubmitToken guard.
+   * Enforces type-level and runtime token check (Doc 13 §8).
+   */
+  async submit(page: Page, token: SubmitToken): Promise<{ submitted: boolean }> {
+    if (!token) {
+      throw new BrowserError('BLOCKED_BY_PORTAL', 'Automated submission requires a valid SubmitToken', { retryable: false });
+    }
+    if (!this.capabilities.submit) {
+      throw new BrowserError(
+        'BLOCKED_BY_PORTAL',
+        `Driver '${this.id}' does not support automated submission. Manual handover required.`,
+        { retryable: false }
+      );
+    }
+
+    const submitControl = await this.findSubmitControl(page);
+    if (!submitControl) {
+      throw new BrowserError('ELEMENT_NOT_FOUND', 'Submit control not found on portal page', { retryable: false });
+    }
+
+    logger.info({ driver: this.id, applicationId: token.applicationId }, '[PortalDriver] Dispatching submit click');
+    await submitControl.click({ timeout: 10000 });
+    return { submitted: true };
   }
 
   /**

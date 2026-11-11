@@ -64,6 +64,13 @@
       "when": 1794373485183,
       "tag": "0008_adorable_shatterstar",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794381761214,
+      "tag": "0009_striped_random",
+      "breakpoints": true
     }
   ]
 }
