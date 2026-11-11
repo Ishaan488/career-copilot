@@ -6,6 +6,7 @@ import { runCompanyCheck } from '@/modules/company-discovery';
 import { reconcileSources, runSourceSync } from '@/modules/discovery';
 import { intelligenceService } from '@/modules/intelligence';
 import { companyResearchService } from '@/modules/companies';
+import { applicationService } from '@/modules/application';
 import { z } from 'zod';
 
 const workerId = `worker_${generateId().slice(0, 8)}`;
@@ -110,6 +111,36 @@ async function startWorker() {
       logger.info(res, '[Worker] AI pending jobs drain completed');
     }
   );
+
+  // Register application.run_step job handler (Milestone 9)
+  await registerHandler(
+    'application.run_step',
+    z.object({ workflowId: z.string().uuid(), step: z.string().optional() }).passthrough(),
+    async (payload) => {
+      logger.info({ workflowId: payload.workflowId }, '[Worker] Running application workflow step');
+      await applicationService.executeStep(payload.workflowId);
+    }
+  );
+
+  // Register workflow.resume job handler (Milestone 9)
+  await registerHandler(
+    'workflow.resume',
+    z.object({ workflowId: z.string().uuid(), requestId: z.string().uuid().optional() }),
+    async (payload) => {
+      logger.info({ workflowId: payload.workflowId, requestId: payload.requestId }, '[Worker] Resuming workflow');
+      await applicationService.resumeWorkflow(payload.workflowId, payload.requestId);
+    }
+  );
+
+  // Run startup recovery for any stale workflow checkpoints
+  try {
+    const recoveredCount = await applicationService.recoverStaleWorkflows();
+    if (recoveredCount > 0) {
+      logger.info({ recoveredCount }, '[Worker] Recovered stale workflows on startup');
+    }
+  } catch (recoverErr) {
+    logger.warn({ recoverErr }, '[Worker] Could not run startup workflow recovery');
+  }
 
   // Start heartbeat
   await startHeartbeat(workerId, {

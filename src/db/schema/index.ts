@@ -5,3 +5,5 @@ export * from './companies';
 export * from './jobs';
 export * from './intelligence';
 export * from './policy';
+export * from './workflows';
+export * from './applications';
