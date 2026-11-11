@@ -50,6 +50,13 @@
       "when": 1794344037298,
       "tag": "0006_open_wolf_cub",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794371418241,
+      "tag": "0007_shallow_klaw",
+      "breakpoints": true
     }
   ]
 }

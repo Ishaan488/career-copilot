@@ -5,6 +5,7 @@ import { generateId } from '@/shared/ids';
 import { runCompanyCheck } from '@/modules/company-discovery';
 import { reconcileSources, runSourceSync } from '@/modules/discovery';
 import { intelligenceService } from '@/modules/intelligence';
+import { companyResearchService } from '@/modules/companies';
 import { z } from 'zod';
 
 const workerId = `worker_${generateId().slice(0, 8)}`;
@@ -22,6 +23,20 @@ async function startWorker() {
     async (payload) => {
       logger.info({ companyId: payload.companyId }, '[Worker] Running scheduled company check');
       await runCompanyCheck(payload.companyId, 'system');
+    }
+  );
+
+  // Register company.research job handler (Milestone 8)
+  await registerHandler(
+    'company.research',
+    z.object({ companyId: z.string().uuid(), force: z.boolean().optional() }),
+    async (payload) => {
+      logger.info({ companyId: payload.companyId }, '[Worker] Running company research & legitimacy check');
+      const res = await companyResearchService.researchCompany(payload.companyId, { force: payload.force });
+      logger.info(
+        { companyId: payload.companyId, status: res.legitimacyStatus, score: res.legitimacyScore },
+        '[Worker] Company research completed'
+      );
     }
   );
 

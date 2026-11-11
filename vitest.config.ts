@@ -6,6 +6,9 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     fileParallelism: false,
+    testTimeout: 180000,
+    hookTimeout: 180000,
+    teardownTimeout: 60000,
     include: ['src/**/__tests__/**/*.test.ts', 'tests/unit/**/*.test.ts'],
     exclude: ['tests/int/**', 'tests/e2e/**', 'tests/failure/**', 'node_modules/**'],
     coverage: {

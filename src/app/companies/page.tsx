@@ -70,6 +70,28 @@ interface CompanyDetail extends Company {
   probeCandidates: ProbeCandidate[];
 }
 
+interface ResearchEvidenceItem {
+  id?: string;
+  signalType: string;
+  sourceUrl: string;
+  contentSnippet: string;
+  confidence: number;
+}
+
+interface ResearchReport {
+  id: string;
+  companyId: string;
+  provider: string;
+  legitimacyStatus: 'verified' | 'some_concerns' | 'high_concern' | 'insufficient_evidence';
+  legitimacyScore: number;
+  signals: Record<string, unknown>;
+  riskFactors: Array<{ code: string; severity: string; description: string }>;
+  summary: string;
+  researchedAt: string;
+  expiresAt: string;
+  evidence: ResearchEvidenceItem[];
+}
+
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +99,8 @@ export default function CompaniesPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedCompany, setSelectedCompany] = useState<CompanyDetail | null>(null);
   const [_detailLoading, setDetailLoading] = useState(false);
+  const [researchReport, setResearchReport] = useState<ResearchReport | null>(null);
+  const [researchLoading, setResearchLoading] = useState(false);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -120,13 +144,32 @@ export default function CompaniesPage() {
     return () => clearTimeout(timer);
   }, [searchQuery, statusFilter]);
 
+  const fetchCompanyResearch = async (companyId: string) => {
+    try {
+      setResearchLoading(true);
+      const res = await fetch(`/api/companies/${companyId}/research`);
+      if (res.ok) {
+        const data = await res.json();
+        setResearchReport(data);
+      } else {
+        setResearchReport(null);
+      }
+    } catch {
+      setResearchReport(null);
+    } finally {
+      setResearchLoading(false);
+    }
+  };
+
   const viewCompanyDetail = async (id: string) => {
     try {
       setDetailLoading(true);
+      setResearchReport(null);
       const res = await fetch(`/api/companies/${id}`);
       if (!res.ok) throw new Error('Failed to load company details');
       const data = await res.json();
       setSelectedCompany(data);
+      fetchCompanyResearch(id);
     } catch (err: unknown) {
       setMessage({ text: err instanceof Error ? err.message : 'Error loading details', type: 'error' });
     } finally {
@@ -325,6 +368,61 @@ export default function CompaniesPage() {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const handleRunResearch = async (companyId: string) => {
+    try {
+      setResearchLoading(true);
+      const res = await fetch(`/api/companies/${companyId}/research`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error?.message || errData.error || 'Company research failed');
+      }
+      setMessage({ text: 'Company research and legitimacy verification completed!', type: 'success' });
+      await fetchCompanyResearch(companyId);
+    } catch (err: unknown) {
+      setMessage({ text: err instanceof Error ? err.message : 'Research failed', type: 'error' });
+    } finally {
+      setResearchLoading(false);
+    }
+  };
+
+  // Legitimacy Badge Helper
+  const renderLegitimacyBadge = (status?: string, score?: number) => {
+    if (!status) return null;
+    const defaultStyle = { bg: '#f1f5f9', text: '#475569', label: 'Insufficient Evidence', border: '#e2e8f0' };
+    const styles: Record<string, { bg: string; text: string; label: string; border: string }> = {
+      verified: { bg: '#dcfce7', text: '#166534', label: 'Verified', border: '#bbf7d0' },
+      some_concerns: { bg: '#fef3c7', text: '#92400e', label: 'Some Concerns', border: '#fde68a' },
+      high_concern: { bg: '#fee2e2', text: '#991b1b', label: 'High Concern', border: '#fecaca' },
+      insufficient_evidence: defaultStyle,
+    };
+    const style = styles[status] || defaultStyle;
+    return (
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '0.35rem',
+          padding: '0.2rem 0.55rem',
+          borderRadius: '9999px',
+          fontSize: '0.75rem',
+          fontWeight: '600',
+          backgroundColor: style.bg,
+          color: style.text,
+          border: `1px solid ${style.border}`,
+        }}
+      >
+        <span>{style.label}</span>
+        {score !== undefined && (
+          <span style={{ fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>({Math.round(score)})</span>
+        )}
+      </span>
+    );
   };
 
   // Status Badge Helper
@@ -963,6 +1061,25 @@ export default function CompaniesPage() {
               >
                 {selectedCompany.monitor?.enabled ? '⏸ Pause Monitor' : '▶ Resume Monitor'}
               </button>
+              <button
+                onClick={() => handleRunResearch(selectedCompany.id)}
+                disabled={researchLoading || selectedCompany.discoveryStatus === 'excluded'}
+                style={{
+                  padding: '0.4rem 0.8rem',
+                  fontSize: '0.75rem',
+                  fontWeight: '600',
+                  borderRadius: '0.375rem',
+                  border: '1px solid #7c3aed',
+                  backgroundColor: '#f5f3ff',
+                  color: '#7c3aed',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                }}
+              >
+                {researchLoading ? '⏳ Researching...' : '🛡️ Research & Legitimacy'}
+              </button>
               {selectedCompany.discoveryStatus !== 'excluded' && (
                 <button
                   onClick={() => handleExcludeCompany(selectedCompany.id)}
@@ -980,6 +1097,209 @@ export default function CompaniesPage() {
                 >
                   ⛔ Exclude
                 </button>
+              )}
+            </div>
+
+            {/* Legitimacy & Verifiable Research Section */}
+            <div
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '0.5rem',
+                padding: '1.25rem',
+                marginBottom: '1.5rem',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <div>
+                  <h4 style={{ fontSize: '0.875rem', fontWeight: '700', textTransform: 'uppercase', color: '#1e293b', margin: 0, letterSpacing: '0.05em' }}>
+                    Legitimacy &amp; Research Assessment
+                  </h4>
+                  <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '0.2rem 0 0 0' }}>
+                    Verifiable public evidence with 180-day retention. Never fabricated.
+                  </p>
+                </div>
+                {researchReport && renderLegitimacyBadge(researchReport.legitimacyStatus, researchReport.legitimacyScore)}
+              </div>
+
+              {researchLoading ? (
+                <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#64748b', fontSize: '0.875rem' }}>
+                  <div style={{ display: 'inline-block', marginBottom: '0.5rem', fontSize: '1.5rem' }}>⏳</div>
+                  <div>Analyzing official website, HTTPS, career portal, and verifiable evidence...</div>
+                </div>
+              ) : !researchReport ? (
+                <div style={{ padding: '1.5rem 1rem', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '0.375rem', border: '1px dashed #cbd5e1' }}>
+                  <div style={{ fontSize: '0.875rem', color: '#475569', fontWeight: '500', marginBottom: '0.5rem' }}>
+                    No research conducted yet
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: '#64748b', maxWidth: '380px', margin: '0 auto 1rem auto' }}>
+                    Run automated website discovery to inspect official domains, SSL/TLS, physical addresses, career pages, and risk signals.
+                  </p>
+                  <button
+                    onClick={() => handleRunResearch(selectedCompany.id)}
+                    style={{
+                      padding: '0.45rem 1rem',
+                      borderRadius: '0.375rem',
+                      border: 'none',
+                      backgroundColor: '#7c3aed',
+                      color: '#ffffff',
+                      fontSize: '0.8rem',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    🛡️ Run Legitimacy Research
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {/* Score Meter & Narrative */}
+                  <div style={{ backgroundColor: '#f8fafc', padding: '0.875rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: '600', color: '#475569', textTransform: 'uppercase' }}>
+                        Legitimacy Score
+                      </span>
+                      <span style={{ fontSize: '1.125rem', fontWeight: '700', fontVariantNumeric: 'tabular-nums', color: researchReport.legitimacyScore >= 70 ? '#16a34a' : researchReport.legitimacyScore >= 40 ? '#d97706' : '#dc2626' }}>
+                        {Math.round(researchReport.legitimacyScore)} <span style={{ fontSize: '0.75rem', fontWeight: '500', color: '#94a3b8' }}>/ 100</span>
+                      </span>
+                    </div>
+                    {/* Progress Bar */}
+                    <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '9999px', overflow: 'hidden', marginBottom: '0.75rem' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(100, Math.max(0, researchReport.legitimacyScore))}%`,
+                          backgroundColor: researchReport.legitimacyScore >= 70 ? '#16a34a' : researchReport.legitimacyScore >= 40 ? '#d97706' : '#dc2626',
+                          transition: 'width 0.4s ease-out',
+                        }}
+                      />
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: 1.5 }}>
+                      {researchReport.summary}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Provider: <strong>{researchReport.provider}</strong></span>
+                      <span>Researched: {new Date(researchReport.researchedAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+
+                  {/* Risk Factors (if any) */}
+                  {researchReport.riskFactors && researchReport.riskFactors.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#dc2626', textTransform: 'uppercase' }}>
+                        Detected Risk Factors ({researchReport.riskFactors.length})
+                      </span>
+                      {researchReport.riskFactors.map((rf, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: '0.6rem 0.75rem',
+                            borderRadius: '0.375rem',
+                            backgroundColor: rf.severity === 'high' ? '#fef2f2' : '#fffbeb',
+                            border: `1px solid ${rf.severity === 'high' ? '#fecaca' : '#fde68a'}`,
+                            fontSize: '0.75rem',
+                            color: rf.severity === 'high' ? '#991b1b' : '#92400e',
+                          }}
+                        >
+                          <div style={{ fontWeight: '600', marginBottom: '0.15rem' }}>
+                            [{rf.severity.toUpperCase()}] {rf.code}
+                          </div>
+                          <div>{rf.description}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Signals Overview */}
+                  {researchReport.signals && (
+                    <div>
+                      <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#475569', textTransform: 'uppercase', display: 'block', marginBottom: '0.4rem' }}>
+                        Verified Signals
+                      </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                        {Object.entries(researchReport.signals)
+                          .filter(([, val]) => typeof val === 'boolean' && val === true)
+                          .map(([key]) => (
+                            <span
+                              key={key}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                fontSize: '0.7rem',
+                                padding: '0.2rem 0.5rem',
+                                borderRadius: '0.25rem',
+                                backgroundColor: '#f0fdf4',
+                                border: '1px solid #bbf7d0',
+                                color: '#166534',
+                                fontWeight: '500',
+                              }}
+                            >
+                              ✓ {key.replace(/^has/, '').replace(/([A-Z])/g, ' $1').toLowerCase()}
+                            </span>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Verifiable Evidence Items */}
+                  <div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#475569', textTransform: 'uppercase', display: 'block', marginBottom: '0.4rem' }}>
+                      Verifiable Evidence Records ({researchReport.evidence?.length || 0})
+                    </span>
+                    {(!researchReport.evidence || researchReport.evidence.length === 0) ? (
+                      <div style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                        No direct evidence captured. Unknown signals remain explicitly absent.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '280px', overflowY: 'auto' }}>
+                        {researchReport.evidence.map((ev, idx) => (
+                          <div
+                            key={ev.id || idx}
+                            style={{
+                              padding: '0.6rem 0.75rem',
+                              borderRadius: '0.375rem',
+                              border: '1px solid #e2e8f0',
+                              backgroundColor: '#ffffff',
+                              fontSize: '0.75rem',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                              <span style={{ fontWeight: '600', color: '#2563eb', textTransform: 'capitalize' }}>
+                                {ev.signalType.replace(/_/g, ' ')}
+                              </span>
+                              <span style={{ fontSize: '0.7rem', color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>
+                                Conf: {Math.round(ev.confidence * 100)}%
+                              </span>
+                            </div>
+                            <a
+                              href={ev.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: '#0284c7', textDecoration: 'underline', wordBreak: 'break-all', display: 'block', fontSize: '0.7rem', marginBottom: '0.3rem' }}
+                            >
+                              {ev.sourceUrl}
+                            </a>
+                            <div
+                              style={{
+                                backgroundColor: '#f8fafc',
+                                borderLeft: '2px solid #cbd5e1',
+                                padding: '0.35rem 0.5rem',
+                                color: '#475569',
+                                fontFamily: 'monospace',
+                                fontSize: '0.7rem',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              &quot;{ev.contentSnippet}&quot;
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 

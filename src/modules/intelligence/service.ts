@@ -5,6 +5,7 @@ import {
   jobSkillRequirements,
   jobStatusHistory,
   companies,
+  companyResearch,
   jobEvaluations,
   recommendationHistory,
 } from '../../db/schema';
@@ -431,8 +432,10 @@ export class IntelligenceService {
       throw new AppError('NOT_FOUND', `Job with id '${jobId}' not found.`);
     }
 
-    // 2. Fetch company if present
+    // 2. Fetch company and research if present
     let company: typeof companies.$inferSelect | null = null;
+    let companyLegitimacyLevel: 'no_concerns_found' | 'some_concerns' | 'high_concern' | 'insufficient_evidence' | undefined = undefined;
+
     if (job.companyId) {
       const [c] = await db
         .select()
@@ -440,6 +443,25 @@ export class IntelligenceService {
         .where(eq(companies.id, job.companyId))
         .limit(1);
       company = c ?? null;
+
+      const [research] = await db
+        .select({ legitimacyStatus: companyResearch.legitimacyStatus })
+        .from(companyResearch)
+        .where(eq(companyResearch.companyId, job.companyId))
+        .orderBy(desc(companyResearch.researchedAt))
+        .limit(1);
+
+      if (research) {
+        if (research.legitimacyStatus === 'verified') {
+          companyLegitimacyLevel = 'no_concerns_found';
+        } else if (research.legitimacyStatus === 'some_concerns') {
+          companyLegitimacyLevel = 'some_concerns';
+        } else if (research.legitimacyStatus === 'high_concern') {
+          companyLegitimacyLevel = 'high_concern';
+        } else {
+          companyLegitimacyLevel = 'insufficient_evidence';
+        }
+      }
     }
 
     // 3. Ensure analysis exists (chain analysis if missing)
@@ -547,6 +569,7 @@ export class IntelligenceService {
       injectionSuspected: analysis.injectionSuspected,
       workMode: job.workMode,
       locationConstraints: (analysis.locationConstraints as string[]) || [],
+      companyLegitimacyLevel,
     };
 
     // 7. Pure Domain Evaluations

@@ -136,3 +136,53 @@ export const companyImportBatches = pgTable('company_import_batches', {
   rejected: integer('rejected').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Company Research (Milestone 8: Verifiable company research, signals, and legitimacy assessment; retention 180 days)
+export const companyResearch = pgTable(
+  'company_research',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(), // 'official_website' | 'public_web' | 'composite'
+    legitimacyStatus: text('legitimacy_status').default('insufficient_evidence').notNull(), // 'verified' | 'some_concerns' | 'high_concern' | 'insufficient_evidence'
+    legitimacyScore: numeric('legitimacy_score', { precision: 5, scale: 2 }).notNull(),
+    signals: jsonb('signals').default(sql`'{}'::jsonb`).notNull(),
+    riskFactors: jsonb('risk_factors').default(sql`'[]'::jsonb`).notNull(),
+    summary: text('summary').notNull(),
+    researchedAt: timestamp('researched_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('company_research_company_id_researched_at_idx').on(t.companyId, t.researchedAt),
+    index('company_research_legitimacy_status_idx').on(t.legitimacyStatus),
+  ]
+);
+
+// Company Research Evidence (Verifiable source URLs, captured timestamps, content snippets, and confidence levels)
+export const companyResearchEvidence = pgTable(
+  'company_research_evidence',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    researchId: uuid('research_id')
+      .notNull()
+      .references(() => companyResearch.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    signalType: text('signal_type').notNull(), // 'domain_ssl' | 'contact_info' | 'about_us' | 'careers_presence' | 'leadership' | 'social_presence' | 'business_registry'
+    sourceUrl: text('source_url').notNull(),
+    contentSnippet: text('content_snippet').notNull(),
+    confidence: numeric('confidence', { precision: 3, scale: 2 }).notNull(), // 0.00 to 1.00
+    metadata: jsonb('metadata').default(sql`'{}'::jsonb`).notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('company_research_evidence_company_id_idx').on(t.companyId),
+    index('company_research_evidence_research_id_idx').on(t.researchId),
+    index('company_research_evidence_signal_type_idx').on(t.signalType),
+  ]
+);
