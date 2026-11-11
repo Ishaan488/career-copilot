@@ -71,6 +71,13 @@
       "when": 1794381761214,
       "tag": "0009_striped_random",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794388088549,
+      "tag": "0010_lonely_vector",
+      "breakpoints": true
     }
   ]
 }

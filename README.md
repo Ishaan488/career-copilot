@@ -34,8 +34,8 @@ Career Copilot operates like a persistent personal operations assistant. It cont
 | **M10** | Browser automation & ATS form field extraction (Greenhouse, Lever, Ashby, Generic) | ✅ Complete |
 | **M11** | Application preparation, verified resume attachment & manual browser handover | ✅ Complete |
 | **M12** | Approved automated submission, two-phase idempotency & unverified resolution | ✅ Complete |
-| **M13** | Application lifecycle tracking & email/notification monitoring | 🔄 Next |
-| **M14** | System hardening, security audit, retention pruning & backup | 📋 Planned |
+| **M13** | Application lifecycle tracking, notifications outbox & live operations dashboard | ✅ Complete |
+| **M14** | System hardening, security audit, retention pruning & backup | 🔄 Next |
 
 ---
 

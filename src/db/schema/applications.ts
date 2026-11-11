@@ -191,3 +191,70 @@ export const applicationSubmissions = pgTable(
       .where(sql`status IN ('intent', 'clicked', 'verified', 'unverified')`),
   ]
 );
+
+// Application Contacts: Recruiter & company contact registry (Doc 08 §72, Doc 03 FR-TRK-4)
+export const applicationContacts = pgTable(
+  'application_contacts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    email: text('email'),
+    role: text('role'), // 'Recruiter' | 'Hiring Manager' | 'Coordinator' | 'Referral' | 'Interviewer'
+    phone: text('phone'),
+    linkedinUrl: text('linkedin_url'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('application_contacts_application_id_idx').on(t.applicationId),
+  ]
+);
+
+// Application Interviews: Structured stage tracking, deadlines, and feedback (Doc 08 §72, Doc 03 FR-TRK-4)
+export const applicationInterviews = pgTable(
+  'application_interviews',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    stage: text('stage').notNull(), // 'recruiter_screen' | 'technical' | 'system_design' | 'behavioral' | 'hiring_manager' | 'onsite' | 'final'
+    title: text('title').notNull(),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+    durationMinutes: integer('duration_minutes').default(45).notNull(),
+    interviewerNames: text('interviewer_names'),
+    meetingUrl: text('meeting_url'),
+    status: text('status').default('scheduled').notNull(), // 'scheduled' | 'completed' | 'cancelled' | 'rescheduled'
+    notes: text('notes'),
+    feedback: text('feedback'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('application_interviews_app_scheduled_idx').on(t.applicationId, t.scheduledAt),
+    index('application_interviews_scheduled_at_idx').on(t.scheduledAt),
+    index('application_interviews_status_idx').on(t.status),
+  ]
+);
+
+// Application Notes: User notes and observations on an application (Doc 08 §72, Doc 03 FR-TRK-4)
+export const applicationNotes = pgTable(
+  'application_notes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    applicationId: uuid('application_id')
+      .notNull()
+      .references(() => applications.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('application_notes_application_id_created_idx').on(t.applicationId, t.createdAt),
+  ]
+);
+
