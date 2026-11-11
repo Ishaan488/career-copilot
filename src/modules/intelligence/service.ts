@@ -318,18 +318,29 @@ export class IntelligenceService {
     } catch (err: unknown) {
       logger.error({ err, jobId }, 'JD analysis failed');
 
+      const errMsg = (err as Error).message || '';
+      const isTransientAiFailure =
+        errMsg.includes('503') ||
+        errMsg.includes('429') ||
+        errMsg.toLowerCase().includes('quota') ||
+        errMsg.toLowerCase().includes('rate limit') ||
+        errMsg.toLowerCase().includes('unavailable') ||
+        (err instanceof AppError && (err.code === 'RATE_LIMITED' || err.code === 'AI_UNAVAILABLE' || err.code === 'EXTERNAL_UNAVAILABLE'));
+
+      const analysisStatus = isTransientAiFailure ? 'pending_ai' : 'failed';
+
       await db
         .update(jobs)
         .set({
-          analysisStatus: 'failed',
-          statusReason: `Analysis failed: ${(err as Error).message}`,
+          analysisStatus,
+          statusReason: `Analysis ${analysisStatus}: ${errMsg}`,
           updatedAt: new Date(),
         })
         .where(eq(jobs.id, jobId));
 
       return {
-        status: 'failed',
-        reason: (err as Error).message,
+        status: analysisStatus,
+        reason: errMsg,
       };
     }
   }

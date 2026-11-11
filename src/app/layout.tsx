@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import './globals.css';
 import { Sidebar } from '@/components/Sidebar';
 import { TopNav } from '@/components/TopNav';
 

@@ -2,7 +2,7 @@ const SENSITIVE_KEY_REGEX = /^(password|passcode|token|secret|authorization|cook
 
 const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
 const PHONE_REGEX = /(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g;
-const API_KEY_REGEX = /\b(AIza[0-9A-Za-z-_]{35}|sk-[A-Za-z0-9]{32,}|bot\d+:[A-Za-z0-9_-]{35})\b/g;
+const API_KEY_REGEX = /\b(AIza[0-9A-Za-z_\-]{30,50}|sk-[A-Za-z0-9_\-]{20,}|bot\d+:[A-Za-z0-9_\-]{30,50})\b/g;
 
 export function redactString(text: string): string {
   return text

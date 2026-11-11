@@ -35,7 +35,34 @@ Career Copilot operates like a persistent personal operations assistant. It cont
 | **M11** | Application preparation, verified resume attachment & manual browser handover | ✅ Complete |
 | **M12** | Approved automated submission, two-phase idempotency & unverified resolution | ✅ Complete |
 | **M13** | Application lifecycle tracking, notifications outbox & live operations dashboard | ✅ Complete |
-| **M14** | System hardening, security audit, retention pruning & backup | 🔄 Next |
+| **M14** | System hardening, security audit, retention pruning & backup | ✅ Complete |
+
+---
+
+## Operations & Maintenance
+
+Career Copilot includes built-in operational utilities for backups, data retention, user data exports, and GDPR/CCPA personal data purging:
+
+```bash
+# Database & file backup (pg_dump + files.tar.gz + manifest.json, retains last 14)
+npm run backup
+
+# Database & file restore (with safety confirmation prompt or --yes)
+npm run restore -- data/backups/2026-11-11T12-00-00-000Z
+
+# Data retention & pruning routine (180-day snapshots, 30-day screenshots, 90-day AI logs)
+npm run retention
+
+# Export all candidate data, resumes, applications, and reviews to JSON + files
+npm run data:export
+
+# Irrevocably purge personal candidate data while preserving public jobs/research
+npm run data:purge -- --confirm=PURGE_PERSONAL_DATA
+
+# Run security audit & failure injection suites
+npm test
+npm run test:failure
+```
 
 ---
 
@@ -105,6 +132,8 @@ Detailed architectural design records and specifications are in [`docs/`](docs/)
 - [`docs/08-database-design.md`](docs/08-database-design.md): PostgreSQL schema & relational model
 - [`docs/10-state-machines.md`](docs/10-state-machines.md): Job & Application lifecycles
 - [`docs/19-user-decisions.md`](docs/19-user-decisions.md): Authoritative architectural decisions log
+- [`docs/WSL-AUTOSTART.md`](docs/WSL-AUTOSTART.md): Windows 11 / WSL2 auto-start, systemd services & WSLg setup
+- [`docs/KNOWN-LIMITATIONS.md`](docs/KNOWN-LIMITATIONS.md): Honest limitations & architectural boundaries
 
 ---
 

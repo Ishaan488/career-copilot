@@ -31,6 +31,7 @@ const configSchema = z.object({
   SMTP_PASS: z.string().optional().default(''),
   SMTP_FROM: z.string().optional().default(''),
   NOTIFY_EMAIL_TO: z.string().optional().default(''),
+  BACKUP_MIRROR_DIR: z.string().optional().default(''),
   IMAP_HOST: z.string().optional().default(''),
   IMAP_PORT: z.coerce.number().optional().default(993),
   IMAP_USER: z.string().optional().default(''),

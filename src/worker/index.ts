@@ -7,6 +7,7 @@ import { reconcileSources, runSourceSync } from '@/modules/discovery';
 import { intelligenceService } from '@/modules/intelligence';
 import { companyResearchService } from '@/modules/companies';
 import { applicationService } from '@/modules/application';
+import { runRetentionPruning, createDatabaseBackup } from '@/modules/maintenance';
 import { z } from 'zod';
 
 const workerId = `worker_${generateId().slice(0, 8)}`;
@@ -129,6 +130,28 @@ async function startWorker() {
     async (payload) => {
       logger.info({ workflowId: payload.workflowId, requestId: payload.requestId }, '[Worker] Resuming workflow');
       await applicationService.resumeWorkflow(payload.workflowId, payload.requestId);
+    }
+  );
+
+  // Register maintenance.retention job handler (Milestone 14)
+  await registerHandler(
+    'maintenance.retention',
+    z.object({}).passthrough(),
+    async (payload) => {
+      logger.info('[Worker] Running scheduled data retention pruning');
+      const res = await runRetentionPruning(payload as Record<string, unknown>);
+      logger.info(res, '[Worker] Data retention pruning completed');
+    }
+  );
+
+  // Register maintenance.backup job handler (Milestone 14)
+  await registerHandler(
+    'maintenance.backup',
+    z.object({ mirrorDir: z.string().optional() }).passthrough(),
+    async (payload) => {
+      logger.info('[Worker] Running scheduled database backup');
+      const res = await createDatabaseBackup(payload);
+      logger.info({ backupDir: res.backupDir }, '[Worker] Database backup completed');
     }
   );
 
