@@ -30,10 +30,10 @@ Career Copilot operates like a persistent personal operations assistant. It cont
 | **M6** | Gemini AI provider integration, rate limiting, cache layer & JD analysis | ✅ Complete |
 | **M7** | Evaluation: Eligibility engine, suitability scoring, policy guardrails & recommendations | ✅ Complete |
 | **M8** | Company research & legitimacy assessment engine | ✅ Complete |
-| **M9** | Browser automation & ATS form field extraction (Playwright) | 🔄 Next |
-| **M10** | Manual browser handover workflow (default submission mode) | 📋 Planned |
-| **M11** | Policy-controlled automated submission (explicit per-app authorization) | 📋 Planned |
-| **M12** | Application lifecycle tracking & email notification monitoring | 📋 Planned |
+| **M9** | Human-in-the-Loop (HITL) review center & checkpointed workflow engine | ✅ Complete |
+| **M10** | Browser automation & ATS form field extraction (Playwright) | 🔄 Next |
+| **M11** | Manual browser handover & policy-controlled submission workflow | 📋 Planned |
+| **M12** | Application lifecycle tracking & email/notification monitoring | 📋 Planned |
 | **M13** | System hardening, security audit, retention pruning & backup | 📋 Planned |
 
 ---
