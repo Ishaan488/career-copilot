@@ -11,6 +11,7 @@ export type WorkflowStep =
   | 'validate_form'
   | 'final_summary'
   | 'await_submission_decision'
+  | 'manual_handover'
   | 'submit'
   | 'verify_submission'
   | 'finalize';

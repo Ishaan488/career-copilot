@@ -3,18 +3,41 @@ import { getDb } from '@/shared/db';
 import {
   applications,
   applicationTasks,
+  applicationFormFields,
+  applicationFieldAnswers,
+  applicationEvents,
   workflowCheckpoints,
   jobs,
   companies,
   resumes,
   resumeVersions,
   humanReviewRequests,
+  reusableApplicationAnswers,
 } from '@/db/schema';
 import { eq, and, desc, lte } from 'drizzle-orm';
 import { AppError } from '@/shared/errors';
 import { logger } from '@/shared/logger';
+import { storage } from '@/shared/storage';
 import { enqueue } from '@/modules/queue';
-import { humanReviewService, ReviewCategory, ResponseSchema } from '@/modules/human-review';
+import {
+  humanReviewService,
+  ReviewCategory,
+  ResponseSchema,
+  isCoreCategory,
+} from '@/modules/human-review';
+import {
+  browserService,
+  FieldType,
+  ExtractedFieldOption,
+  SelectorStrategy,
+} from '@/modules/browser';
+import {
+  getVerifiedSnapshot,
+} from '@/modules/profile';
+import {
+  getResumeVersion,
+  recordResumeAttachment,
+} from '@/modules/resume';
 import {
   StepContext,
   StepResult,
@@ -25,7 +48,13 @@ import {
   executeResolveUrlStep,
   executeSelectResumeStep,
   executeVerifyDomainStep,
+  executeDetectPlatformStep,
+  executeAwaitSubmissionDecisionStep,
 } from './domain/workflow-steps';
+import {
+  mapFieldsToAnswers,
+  computeSummaryHash,
+} from './domain/field-mapping';
 
 export class ApplicationService {
   /**
@@ -218,7 +247,7 @@ export class ApplicationService {
       version: checkpoint.version,
     };
 
-    // 2. Execute pure step logic
+    // 2. Execute step logic
     let result: StepResult;
     const taskStart = new Date();
 
@@ -242,19 +271,401 @@ export class ApplicationService {
 
         case 'detect_platform': {
           const appUrl = (state.applicationUrl as string) || app.applicationUrl;
-          const platform = detectAtsPlatform(appUrl);
+          result = executeDetectPlatformStep(appUrl);
+          break;
+        }
+
+        case 'open_portal': {
+          const appUrl = (state.applicationUrl as string) || app.applicationUrl;
+          result = await browserService.withPage(
+            appUrl,
+            { workflowId, applicationId: app.id },
+            async (page, driver) => {
+              const block = await driver.detectBlock(page);
+              if (block) {
+                return {
+                  type: 'pause' as const,
+                  reason: 'blocked' as const,
+                  message: `Application portal access blocked (${block}). Manual handover required.`,
+                  stateUpdates: { blockType: block },
+                };
+              }
+              return {
+                type: 'next' as const,
+                nextStep: 'extract_form' as const,
+                stateUpdates: { portalOpened: true },
+              };
+            }
+          );
+          break;
+        }
+
+        case 'extract_form': {
+          const appUrl = (state.applicationUrl as string) || app.applicationUrl;
+          result = await browserService.withPage(
+            appUrl,
+            { workflowId, applicationId: app.id },
+            async (page, driver) => {
+              const extracted = await driver.extractForm(page);
+
+              // Persist extracted fields
+              for (const f of extracted.fields) {
+                await db
+                  .insert(applicationFormFields)
+                  .values({
+                    applicationId: app.id,
+                    fieldKey: f.fieldKey,
+                    label: f.label,
+                    type: f.type,
+                    required: f.required,
+                    options: f.options,
+                    selectorStrategy: f.selectorStrategy,
+                    category: f.category,
+                    pageIndex: f.pageIndex,
+                  })
+                  .onConflictDoUpdate({
+                    target: [applicationFormFields.applicationId, applicationFormFields.fieldKey],
+                    set: {
+                      label: f.label,
+                      type: f.type,
+                      required: f.required,
+                      options: f.options,
+                      selectorStrategy: f.selectorStrategy,
+                      category: f.category,
+                    },
+                  });
+              }
+
+              return {
+                type: 'next' as const,
+                nextStep: 'map_fields' as const,
+                stateUpdates: { extractedFieldsCount: extracted.fields.length },
+              };
+            }
+          );
+          break;
+        }
+
+        case 'map_fields': {
+          const formFields = await db
+            .select()
+            .from(applicationFormFields)
+            .where(eq(applicationFormFields.applicationId, app.id));
+
+          const profile = await getVerifiedSnapshot();
+          const reusable = await db.select().from(reusableApplicationAnswers);
+          const reusableList = reusable.map((r) => ({
+            questionHash: r.questionKey,
+            normalizedQuestion: r.questionKey,
+            answer: r.answer,
+            category: r.category,
+          }));
+
+          const mappedAnswers = mapFieldsToAnswers(formFields, profile, reusableList);
+
+          for (const ma of mappedAnswers) {
+            await db
+              .insert(applicationFieldAnswers)
+              .values({
+                fieldId: ma.fieldId,
+                answer: ma.answer,
+                decision: ma.decision,
+                source: ma.source,
+                sourceRef: ma.sourceRef,
+                confidence: String(ma.confidence || 1.0),
+                status: ma.status,
+              })
+              .onConflictDoUpdate({
+                target: applicationFieldAnswers.fieldId,
+                set: {
+                  answer: ma.answer,
+                  decision: ma.decision,
+                  source: ma.source,
+                  sourceRef: ma.sourceRef,
+                  status: ma.status,
+                  updatedAt: new Date(),
+                },
+              });
+          }
+
           result = {
             type: 'next',
-            nextStep: 'final_summary',
-            stateUpdates: { platform },
+            nextStep: 'validate_answers',
+            stateUpdates: { mappedCount: mappedAnswers.length },
           };
           break;
         }
 
+        case 'validate_answers': {
+          const answersWithFields = await db
+            .select({
+              answer: applicationFieldAnswers,
+              field: applicationFormFields,
+            })
+            .from(applicationFieldAnswers)
+            .innerJoin(applicationFormFields, eq(applicationFieldAnswers.fieldId, applicationFormFields.id))
+            .where(eq(applicationFormFields.applicationId, app.id));
+
+          const needsReview = answersWithFields.filter(
+            (item) => item.answer.status === 'needs_review'
+          );
+
+          if (needsReview.length > 0) {
+            const reviewRequests = needsReview.map((item) => {
+              const isCore = isCoreCategory(item.field.category);
+              const isActionAuth =
+                item.field.category === 'legal' ||
+                item.field.category === 'consent' ||
+                item.field.category === 'bond';
+
+              let schemaType: 'boolean' | 'radio' | 'select' | 'number' | 'text' = 'text';
+              if (item.field.type === 'checkbox') schemaType = 'boolean';
+              else if (item.field.type === 'select') schemaType = 'select';
+              else if (item.field.type === 'radio') schemaType = 'radio';
+              else if (item.field.type === 'number') schemaType = 'number';
+
+              return {
+                category: item.field.category,
+                question: item.field.label,
+                fieldId: item.field.id,
+                requiredAction: isActionAuth ? ('authorize' as const) : ('answer' as const),
+                responseSchema: {
+                  type: schemaType,
+                  required: item.field.required,
+                  options: item.field.options as Array<{ label: string; value: string }>,
+                },
+                context: {
+                  fieldId: item.field.id,
+                  fieldKey: item.field.fieldKey,
+                  label: item.field.label,
+                  category: item.field.category,
+                  isCore,
+                  suggestedAnswer: isCore ? null : item.answer.answer,
+                },
+              };
+            });
+
+            result = {
+              type: 'pause',
+              reason: 'review',
+              message: `Application requires human review for ${needsReview.length} form field(s).`,
+              reviewRequests,
+            };
+          } else {
+            result = {
+              type: 'next',
+              nextStep: 'fill_form',
+            };
+          }
+          break;
+        }
+
+        case 'fill_form': {
+          const answersWithFields = await db
+            .select({
+              answer: applicationFieldAnswers,
+              field: applicationFormFields,
+            })
+            .from(applicationFieldAnswers)
+            .innerJoin(applicationFormFields, eq(applicationFieldAnswers.fieldId, applicationFormFields.id))
+            .where(eq(applicationFormFields.applicationId, app.id));
+
+          // Resolve resume version file path
+          let resumeFilePath: string | undefined;
+          let resumeFileName: string | undefined;
+          if (app.resumeVersionId) {
+            const version = await getResumeVersion(app.resumeVersionId);
+            resumeFilePath = storage.getAbsolutePath(version.storedPath);
+            resumeFileName = version.originalFilename || 'resume.pdf';
+            await recordResumeAttachment(app.id, app.resumeVersionId);
+          }
+
+          const appUrl = (state.applicationUrl as string) || app.applicationUrl;
+          const fillPlan = {
+            fields: answersWithFields.map((af) => ({
+              fieldKey: af.field.fieldKey,
+              value: af.answer.answer,
+              decision: af.answer.decision as 'answered' | 'declined' | 'left_blank',
+              type: af.field.type,
+            })),
+            resumeFilePath,
+            resumeFileName,
+          };
+
+          result = await browserService.withPage(
+            appUrl,
+            { workflowId, applicationId: app.id },
+            async (page, driver) => {
+              const fillReport = await driver.fill(page, fillPlan);
+
+              // Update filled answers status
+              for (const item of fillReport.filled) {
+                if (item.success) {
+                  const matched = answersWithFields.find((af) => af.field.fieldKey === item.fieldKey);
+                  if (matched) {
+                    await db
+                      .update(applicationFieldAnswers)
+                      .set({ status: 'filled', updatedAt: new Date() })
+                      .where(eq(applicationFieldAnswers.id, matched.answer.id));
+                  }
+                }
+              }
+
+              return {
+                type: 'next' as const,
+                nextStep: 'validate_form' as const,
+                stateUpdates: {
+                  filledCount: fillReport.filled.filter((f) => f.success).length,
+                  fillErrorsCount: fillReport.errors.length,
+                },
+              };
+            }
+          );
+          break;
+        }
+
+        case 'validate_form': {
+          const answersWithFields = await db
+            .select({
+              answer: applicationFieldAnswers,
+              field: applicationFormFields,
+            })
+            .from(applicationFieldAnswers)
+            .innerJoin(applicationFormFields, eq(applicationFieldAnswers.fieldId, applicationFormFields.id))
+            .where(eq(applicationFormFields.applicationId, app.id));
+
+          const appUrl = (state.applicationUrl as string) || app.applicationUrl;
+
+          result = await browserService.withPage(
+            appUrl,
+            { workflowId, applicationId: app.id },
+            async (page, driver) => {
+              const extractedFields = answersWithFields.map((af) => ({
+                fieldKey: af.field.fieldKey,
+                label: af.field.label,
+                type: af.field.type as FieldType,
+                required: af.field.required,
+                options: af.field.options as ExtractedFieldOption[],
+                selectorStrategy: af.field.selectorStrategy as SelectorStrategy[],
+                category: af.field.category,
+                pageIndex: af.field.pageIndex,
+                isHoneypot: false,
+              }));
+
+              await driver.readBack(page, extractedFields);
+
+              // Mark verified filled
+              for (const af of answersWithFields) {
+                await db
+                  .update(applicationFieldAnswers)
+                  .set({ status: 'verified_filled', updatedAt: new Date() })
+                  .where(eq(applicationFieldAnswers.id, af.answer.id));
+              }
+
+              return {
+                type: 'next' as const,
+                nextStep: 'final_summary' as const,
+                stateUpdates: { verifiedFilled: true },
+              };
+            }
+          );
+          break;
+        }
+
         case 'final_summary': {
+          const answersWithFields = await db
+            .select({
+              answer: applicationFieldAnswers,
+              field: applicationFormFields,
+            })
+            .from(applicationFieldAnswers)
+            .innerJoin(applicationFormFields, eq(applicationFieldAnswers.fieldId, applicationFormFields.id))
+            .where(eq(applicationFormFields.applicationId, app.id));
+
+          let resumeSha256 = 'no_resume';
+          if (app.resumeVersionId) {
+            const version = await getResumeVersion(app.resumeVersionId);
+            resumeSha256 = version.sha256;
+          }
+
+          const appUrl = (state.applicationUrl as string) || app.applicationUrl;
+          const summaryHash = computeSummaryHash(
+            appUrl,
+            resumeSha256,
+            answersWithFields.map((af) => ({
+              fieldKey: af.field.fieldKey,
+              answer: af.answer.answer,
+              decision: af.answer.decision,
+            }))
+          );
+
+          await db
+            .update(applications)
+            .set({
+              status: 'ready_to_submit',
+              updatedAt: new Date(),
+            })
+            .where(eq(applications.id, app.id));
+
+          result = {
+            type: 'next',
+            nextStep: 'await_submission_decision',
+            stateUpdates: {
+              summaryHash,
+              readyAt: new Date().toISOString(),
+            },
+          };
+          break;
+        }
+
+        case 'await_submission_decision': {
+          const appUrl = (state.applicationUrl as string) || app.applicationUrl;
+          const sHash = (state.summaryHash as string) || '';
+          result = executeAwaitSubmissionDecisionStep(appUrl, sHash, ctx);
+          break;
+        }
+
+        case 'manual_handover': {
+          result = {
+            type: 'pause',
+            reason: 'manual_handover',
+            message: 'Awaiting manual submission confirmation from user.',
+          };
+          break;
+        }
+
+        case 'finalize': {
+          await db
+            .update(applications)
+            .set({
+              status: 'submitted',
+              submissionSource: (state.submissionSource as string) || 'manual_confirmed',
+              appliedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(applications.id, app.id));
+
+          if (job) {
+            await db
+              .update(jobs)
+              .set({ status: 'applied', updatedAt: new Date() })
+              .where(eq(jobs.id, job.id));
+          }
+
+          await db.insert(applicationEvents).values({
+            applicationId: app.id,
+            type: 'submitted',
+            fromStatus: 'ready_to_submit',
+            toStatus: 'submitted',
+            actor: 'user',
+            details: {
+              submissionSource: (state.submissionSource as string) || 'manual_confirmed',
+              appliedAt: new Date().toISOString(),
+            },
+          });
+
           result = {
             type: 'done',
-            stateUpdates: { readyAt: new Date().toISOString() },
           };
           break;
         }
@@ -327,10 +738,24 @@ export class ApplicationService {
         { singletonKey: `wf:${workflowId}:${result.nextStep}:${newVersion}` }
       );
     } else if (result.type === 'pause') {
+      const cpStatus =
+        result.reason === 'review'
+          ? 'waiting_review'
+          : result.reason === 'authorization'
+            ? 'waiting_authorization'
+            : 'paused';
+
+      const appStatus =
+        result.reason === 'review'
+          ? 'awaiting_review'
+          : result.reason === 'manual_handover'
+            ? 'ready_to_submit'
+            : app.status;
+
       await db
         .update(workflowCheckpoints)
         .set({
-          status: 'waiting_review',
+          status: cpStatus,
           state: updatedState,
           version: newVersion,
           updatedAt: new Date(),
@@ -345,18 +770,19 @@ export class ApplicationService {
       await db
         .update(applications)
         .set({
-          status: 'awaiting_review',
+          status: appStatus,
           updatedAt: new Date(),
         })
         .where(eq(applications.id, app.id));
 
-      // Create human review requests
+      // Create human review requests if any
       if (result.reviewRequests && result.reviewRequests.length > 0) {
         for (const req of result.reviewRequests) {
           await humanReviewService.createRequest({
             workflowId,
             jobId: app.jobId,
             applicationId: app.id,
+            fieldId: req.fieldId,
             category: req.category as ReviewCategory,
             question: req.question,
             requiredAction: req.requiredAction,
@@ -373,7 +799,7 @@ export class ApplicationService {
         status: 'pending',
         startedAt: taskStart,
         finishedAt: new Date(),
-        error: result.message || 'Paused waiting for human review',
+        error: result.message || 'Workflow paused',
       });
     } else if (result.type === 'done') {
       await db
@@ -552,7 +978,7 @@ export class ApplicationService {
   }
 
   /**
-   * Retrieves an application by ID.
+   * Retrieves an application by ID with form fields, answers, and audit history.
    */
   async getApplication(id: string) {
     const db = getDb();
@@ -577,11 +1003,110 @@ export class ApplicationService {
       .where(eq(applicationTasks.applicationId, id))
       .orderBy(desc(applicationTasks.createdAt));
 
+    const fieldsWithAnswers = await db
+      .select({
+        field: applicationFormFields,
+        answer: applicationFieldAnswers,
+      })
+      .from(applicationFormFields)
+      .leftJoin(applicationFieldAnswers, eq(applicationFormFields.id, applicationFieldAnswers.fieldId))
+      .where(eq(applicationFormFields.applicationId, id));
+
     return {
       ...row.app,
       jobTitle: row.jobTitle,
       companyName: row.companyName,
       tasks,
+      fields: fieldsWithAnswers,
+    };
+  }
+
+  /**
+   * Starts manual browser handover for user inspection and manual submission.
+   */
+  async startManualHandover(applicationId: string) {
+    const app = await this.getApplication(applicationId);
+    if (!app) {
+      throw new AppError('NOT_FOUND', `Application '${applicationId}' not found.`);
+    }
+
+    return {
+      applicationId: app.id,
+      applicationUrl: app.applicationUrl,
+      platform: app.platform,
+      status: app.status,
+      fieldsCount: app.fields.length,
+      instructions:
+        'Please open the application URL in your browser. Verify all prefilled answers and click Submit on the portal. Once submitted, return here and confirm.',
+    };
+  }
+
+  /**
+   * Confirms that the candidate has completed manual submission on the portal.
+   */
+  async confirmManualSubmission(applicationId: string, notes?: string) {
+    const db = getDb();
+
+    const [app] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+
+    if (!app) {
+      throw new AppError('NOT_FOUND', `Application '${applicationId}' not found.`);
+    }
+
+    // Update application
+    await db
+      .update(applications)
+      .set({
+        status: 'submitted',
+        submissionSource: 'manual_confirmed',
+        appliedAt: new Date(),
+        notes: notes || app.notes,
+        updatedAt: new Date(),
+      })
+      .where(eq(applications.id, applicationId));
+
+    // Update job status
+    await db
+      .update(jobs)
+      .set({ status: 'applied', updatedAt: new Date() })
+      .where(eq(jobs.id, app.jobId));
+
+    // Record application event
+    await db.insert(applicationEvents).values({
+      applicationId: app.id,
+      type: 'submitted',
+      fromStatus: app.status,
+      toStatus: 'submitted',
+      actor: 'user',
+      details: {
+        submissionSource: 'manual_confirmed',
+        notes: notes || null,
+        confirmedAt: new Date().toISOString(),
+      },
+    });
+
+    // Complete checkpoint if exists
+    if (app.workflowId) {
+      await db
+        .update(workflowCheckpoints)
+        .set({
+          status: 'completed',
+          step: 'finalize',
+          updatedAt: new Date(),
+        })
+        .where(eq(workflowCheckpoints.workflowId, app.workflowId));
+    }
+
+    logger.info({ applicationId }, '[ApplicationService] Application confirmed manually submitted by user');
+
+    return {
+      applicationId: app.id,
+      status: 'submitted',
+      submissionSource: 'manual_confirmed',
     };
   }
 

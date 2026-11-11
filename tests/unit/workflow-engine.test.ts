@@ -8,6 +8,7 @@ import { applications, applicationTasks } from '@/db/schema/applications';
 import { workflowCheckpoints, humanReviewRequests } from '@/db/schema/workflows';
 import { resumes, resumeVersions } from '@/db/schema/resumes';
 import { getDb, closeDbPool } from '@/shared/db';
+import { storage } from '@/shared/storage';
 import { eq } from 'drizzle-orm';
 
 describe('Checkpointed Workflow Engine (Milestone 9)', () => {
@@ -41,12 +42,18 @@ describe('Checkpointed Workflow Engine (Milestone 9)', () => {
       .returning({ id: companies.id });
     testCompanyId = comp!.id;
 
-    // Insert parent resume group and active resume version
+    // Insert parent resume group and active resume version backed by real storage bytes
+    const dummyPdf = Buffer.from(
+      `%PDF-1.4\n% wf-engine-${Date.now()}\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\nxref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \ntrailer<</Size 3/Root 1 0 R>>\nstartxref\n101\n%%EOF`
+    );
+    const storagePath = `resumes/wf_engine_${Date.now()}.pdf`;
+    const stored = await storage.put(storagePath, dummyPdf);
+
     const [rGroup] = await db
       .insert(resumes)
       .values({
         label: 'Engineering Master',
-        isDefault: true,
+        isDefault: false,
         status: 'active',
       })
       .returning({ id: resumes.id });
@@ -57,9 +64,9 @@ describe('Checkpointed Workflow Engine (Milestone 9)', () => {
         resumeId: rGroup!.id,
         versionNo: 1,
         originalFilename: 'master.pdf',
-        storedPath: 'data/resumes/master.pdf',
-        sha256: 'hash_test_resume_master_' + Date.now(),
-        sizeBytes: 1024,
+        storedPath: storagePath,
+        sha256: stored.sha256,
+        sizeBytes: stored.size,
         label: 'v1.0',
         status: 'active',
       })
@@ -154,29 +161,20 @@ describe('Checkpointed Workflow Engine (Milestone 9)', () => {
     expect(ckpt!.step).toBe('detect_platform');
     expect(ckpt!.version).toBe(4);
 
-    // Step 4: detect_platform -> final_summary
+    // Step 4: detect_platform -> open_portal (enters browser automation)
     await applicationService.executeStep(workflowId);
     [ckpt] = await db
       .select()
       .from(workflowCheckpoints)
       .where(eq(workflowCheckpoints.workflowId, workflowId));
-    expect(ckpt!.step).toBe('final_summary');
+    expect(ckpt!.step).toBe('open_portal');
     expect(ckpt!.version).toBe(5);
 
-    // Step 5: final_summary -> done
-    await applicationService.executeStep(workflowId);
-    [ckpt] = await db
-      .select()
-      .from(workflowCheckpoints)
-      .where(eq(workflowCheckpoints.workflowId, workflowId));
-    expect(ckpt!.status).toBe('completed');
-
-    // Verify application state is ready_to_submit
+    // Verify application platform was detected
     const [app] = await db
       .select()
       .from(applications)
       .where(eq(applications.workflowId, workflowId));
-    expect(app!.status).toBe('ready_to_submit');
     expect(app!.platform).toBe('greenhouse');
   });
 
